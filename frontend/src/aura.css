@@ -951,11 +951,11 @@ h1, h2, h3, .brand strong, .image-note strong, .map-caption strong { font-family
   z-index: 1;
   inset: 0;
   border-radius: 2px;
-  background: linear-gradient(90deg, rgba(248,247,242,.28) 0%, rgba(248,247,242,.12) 16%, transparent 42%);
+  background: linear-gradient(90deg, rgba(248,247,242,.28) 0%, rgba(248,247,242,.16) 18%, rgba(248,247,242,.07) 42%, transparent 68%);
   -webkit-backdrop-filter: blur(13px);
   backdrop-filter: blur(13px);
-  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 8%, transparent 42%);
-  mask-image: linear-gradient(90deg, #000 0%, #000 8%, transparent 42%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 6%, rgba(0,0,0,.92) 16%, rgba(0,0,0,.68) 32%, rgba(0,0,0,.34) 50%, transparent 72%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 6%, rgba(0,0,0,.92) 16%, rgba(0,0,0,.68) 32%, rgba(0,0,0,.34) 50%, transparent 72%);
   content: '';
   pointer-events: none;
 }

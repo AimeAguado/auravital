@@ -1,7 +1,7 @@
 (() => {
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, professionals: [], selectedProfessional: null, selectedSlot: null, pendingBooking: false, tab: 'login' };
+  const state = { user: null, professionals: [], selectedProfessional: null, selectedSlot: null, pendingBooking: false, bookingWizardAuthPending: false, tab: 'login' };
   const modal = $('#turno'); const authModal = $('#auth-modal'); const passwordModal = $('#password-modal'); const appShell = $('#app-shell');
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const dateToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -18,7 +18,8 @@
   const fmtDate = date => new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
 
   function openModal(element) { element.classList.add('open'); document.body.style.overflow = 'hidden'; }
-  function closeModal(element) { element.classList.remove('open'); if (!$('.modal.open')) document.body.style.overflow = ''; }
+  function closeModal(element) { element.classList.remove('open'); if (!$('.modal.open')) document.body.style.overflow = ''; if (element === modal) document.dispatchEvent(new Event('auravital:booking-closed')); if (element === authModal && !state.user) state.bookingWizardAuthPending = false; }
+  function openBooking(detail = {}) { openModal(modal); document.dispatchEvent(new CustomEvent('auravital:open-booking', { detail })); }
   [modal, authModal, passwordModal].forEach(element => {
     $('.modal-close', element).addEventListener('click', () => closeModal(element));
     element.addEventListener('click', event => { if (event.target === element) closeModal(element); });
@@ -34,9 +35,8 @@
     const list = $('#professional-list');
     try {
       const result = await api('/api/professionals'); state.professionals = result.professionals;
-      if (!state.professionals.length) { list.innerHTML = '<p class="notice">Próximamente vas a poder conocer a nuestro equipo y consultar su disponibilidad.</p>'; return; }
-      list.innerHTML = state.professionals.map(professional => `<article class="profile-card">${professional.photo ? `<img class="profile-photo" src="${escapeHtml(professional.photo)}" alt="${escapeHtml(professional.name)}">` : ''}<span class="eyebrow">${escapeHtml(professional.specialty)}</span><h3>${escapeHtml(professional.name)}</h3><p>${escapeHtml(professional.description || 'Profesional de Aura Vital, dedicada/o a tu bienestar y salud.')}</p><p><strong>${professional.price ? `$ ${Number(professional.price).toLocaleString('es-AR')}` : 'Consultar valor'}</strong> · ${professional.durationMinutes} min</p>${professional.turnerMode === 'BLIPDOC' && professional.blipdocUrl ? `<a class="button small" href="${escapeHtml(professional.blipdocUrl)}" target="_blank" rel="noopener">Agendar turno ↗</a>` : `<button class="button small" type="button" data-book-professional="${escapeHtml(professional.id)}">Agendar turno</button>`}</article>`).join('');
-    } catch (error) { list.innerHTML = `<p class="notice">No pudimos cargar profesionales. ${escapeHtml(error.message)}</p>`; }
+      document.dispatchEvent(new CustomEvent('auravital:professionals', { detail: state.professionals }));
+    } catch (error) { document.dispatchEvent(new CustomEvent('auravital:professionals-error', { detail: error.message })); }
   }
 
   function chooseProfessional(professional) {
@@ -45,28 +45,23 @@
       else toast('Este profesional todavía no tiene un enlace de turnos configurado.');
       return;
     }
-    state.selectedProfessional = professional.id; state.selectedSlot = null;
-    $('#booking-professional').innerHTML = `<option value="${escapeHtml(professional.id)}">${escapeHtml(professional.name)} · ${escapeHtml(professional.specialty)}</option>`;
-    $('#booking-date').min = dateToday(); $('#booking-date').value = '';
-    $('#booking-form').hidden = false;
-    $('#booking-professional-detail').textContent = `${professional.specialty} · ${professional.durationMinutes} minutos · ${professional.price ? `$ ${Number(professional.price).toLocaleString('es-AR')}` : 'consultar valor'}`;
-    $('#booking-slots').innerHTML = '<span class="notice">Elegí una fecha para ver los horarios disponibles.</span>';
-    $('#booking-confirmation').hidden = true; $('#booking-form button[type="submit"]').disabled = true;
-    openModal(modal);
+    openBooking({ professionalId: professional.id });
   }
   $('#professional-list').addEventListener('click', event => {
+    const contactButton = event.target.closest('[data-professional-contact]');
+    if (contactButton) {
+      const name = contactButton.dataset.professionalContact;
+      if (contactButton.closest('.professional-card')?.querySelector('.professional-badge.external')) toast(`El enlace de BlipDoc de ${name} todavía no está configurado. Contactanos y te ayudamos a reservar.`);
+      else toast(`La agenda de ${name} todavía no está configurada en el turnero. Contactanos para consultar disponibilidad.`);
+      return;
+    }
     const button = event.target.closest('[data-book-professional]'); if (!button) return;
     const professional = state.professionals.find(item => item.id === button.dataset.bookProfessional); if (professional) chooseProfessional(professional);
   });
   document.addEventListener('click', event => {
     const anchor = event.target.closest('[data-booking]'); if (!anchor) return;
     event.preventDefault();
-    if (anchor.dataset.service) {
-      const professional = state.professionals.find(item => item.specialty.toLowerCase().includes(anchor.dataset.service.toLowerCase()));
-      if (professional) { chooseProfessional(professional); return; }
-    }
-    const internal = state.professionals.find(item => item.turnerMode === 'AURA_VITAL');
-    if (internal) chooseProfessional(internal); else toast('En breve vas a poder solicitar turnos desde este sitio.');
+    openBooking({ service: anchor.dataset.service || '' });
   });
   $('#booking-professional').addEventListener('change', event => {
     const professional = state.professionals.find(item => item.id === event.target.value); if (professional) chooseProfessional(professional);
@@ -106,6 +101,8 @@
   }
 
   function openAuth(tab = 'login') { state.tab = tab; setAuthTab(tab); openModal(authModal); }
+  document.addEventListener('auravital:request-booking-auth', () => { state.bookingWizardAuthPending = true; openAuth('login'); });
+  document.addEventListener('auravital:booking-user-updated', event => { state.user = event.detail; updateAccountButton(); });
   function setAuthTab(tab) {
     state.tab = tab;
     $$('#auth-modal [data-auth-tab]').forEach(button => button.classList.toggle('active', button.dataset.authTab === tab));
@@ -113,12 +110,20 @@
     $('#auth-title').textContent = tab === 'login' ? 'Ingresá a tu cuenta.' : 'Creá tu cuenta.';
   }
   $$('[data-auth-tab]').forEach(button => button.addEventListener('click', () => setAuthTab(button.dataset.authTab)));
+  const registerForm = $('#register-form');
+  if (!registerForm.elements.phone) {
+    const phoneField = document.createElement('div');
+    phoneField.className = 'field full';
+    phoneField.innerHTML = '<label for="register-phone">Teléfono</label><input id="register-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" pattern="[+0-9() .-]{8,24}" title="Ingresá un teléfono válido con código de área" placeholder="+54 9 ..." required>';
+    $('#register-form [name="email"]').closest('.field').before(phoneField);
+  }
   $('#account-button').addEventListener('click', () => state.user ? renderPortal() : openAuth());
   async function submitAuth(form, endpoint) {
     try {
       const result = await api(endpoint, { method: 'POST', body: JSON.stringify(formData(form)) });
       state.user = result.user; closeModal(authModal); updateAccountButton();
       if (state.pendingBooking) { state.pendingBooking = false; await confirmBooking(); }
+      else if (state.bookingWizardAuthPending) { state.bookingWizardAuthPending = false; document.dispatchEvent(new CustomEvent('auravital:booking-authenticated', { detail: result.user })); }
       else renderPortal();
     } catch (error) { toast(error.message); }
   }
@@ -130,7 +135,10 @@
     try { await api('/api/account/password', { method: 'POST', body: JSON.stringify({ currentPassword: data.currentPassword, newPassword: data.newPassword }) }); event.currentTarget.reset(); closeModal(passwordModal); toast('Contraseña actualizada.'); }
     catch (error) { toast(error.message); }
   });
-  function updateAccountButton() { $('#account-button').textContent = state.user ? 'Mi cuenta' : 'Ingresar'; }
+  function updateAccountButton() {
+    $('#account-button').textContent = state.user ? 'Mi cuenta' : 'Ingresar';
+    document.body.classList.toggle('professional-user', state.user?.role === 'PROFESSIONAL');
+  }
 
   function showPortal() {
     document.body.classList.add('app-mode'); appShell.hidden = false;
@@ -172,7 +180,7 @@
     view.addEventListener('click', async event => { const button = event.target.closest('[data-cancel]'); if (!button) return; try { await api(`/api/appointments/${button.dataset.cancel}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) }); toast('Turno cancelado.'); renderPortal(); } catch (error) { toast(error.message); } });
     view.addEventListener('submit', async event => { if (event.target.id !== 'profile-form') return; event.preventDefault(); try { const result = await api('/api/profile', { method: 'PATCH', body: JSON.stringify(formData(event.target)) }); state.user = result.user; toast('Perfil actualizado.'); renderPortal(); } catch (error) { toast(error.message); } });
   }
-  async function renderProfessional() {
+  async function renderProfessionalLegacy() {
     const [profile, data] = await Promise.all([api('/api/professional/me'), api('/api/appointments')]); const professional = profile.professional;
     $('#portal-content').innerHTML = `<div class="portal-grid"><div class="portal-panel"><span class="eyebrow">Especialidad</span><h3>${escapeHtml(professional.specialty)}</h3><p>Turnero Aura Vital · ${professional.durationMinutes} minutos · $ ${Number(professional.price).toLocaleString('es-AR')}</p></div><div class="portal-panel"><span class="eyebrow">Próximos turnos</span><h3>${data.appointments.filter(item => new Date(item.startAt) >= new Date()).length}</h3></div><div class="portal-panel"><span class="eyebrow">Zona horaria</span><h3>Argentina</h3><p>America/Argentina/Buenos_Aires</p></div></div><div class="portal-panel"><h3>Agenda de turnos</h3><div class="portal-nav"><button class="button secondary small" data-range="week">Semana</button><button class="button secondary small" data-range="month">Mes</button><button class="button secondary small" data-range="all">Todos</button></div><div id="professional-appointments">${appointmentsTable(data.appointments, true)}</div></div><div class="portal-panel"><h3>Horarios habituales</h3><p class="notice">Configurá hasta cinco franjas semanales. Los cambios no eliminan reservas existentes.</p><form id="schedule-form" class="portal-form"><div class="field"><label>Día</label><select name="weekday"><option value="1">Lunes</option><option value="2">Martes</option><option value="3">Miércoles</option><option value="4">Jueves</option><option value="5">Viernes</option><option value="6">Sábado</option><option value="0">Domingo</option></select></div><div class="field"><label>Desde</label><input type="time" name="start" value="09:00" required></div><div class="field"><label>Hasta</label><input type="time" name="end" value="17:00" required></div><button class="button full">Agregar horario semanal</button></form><div id="schedule-list"></div></div><div class="portal-panel"><h3>Bloquear fecha o franja</h3><form id="block-form" class="portal-form"><div class="field"><label>Fecha</label><input name="date" type="date" min="${dateToday()}" required></div><div class="field"><label><input type="checkbox" name="allDay"> Día completo</label></div><div class="field"><label>Desde</label><input name="start" type="time" value="09:00"></div><div class="field"><label>Hasta</label><input name="end" type="time" value="17:00"></div><button class="button full">Guardar bloqueo</button></form><div id="block-list"></div></div>`;
     const renderSchedule = schedule => { $('#schedule-list').innerHTML = schedule.map((item, index) => `<span class="tag" style="opacity:${item.enabled === false ? '.5' : '1'}">${['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][item.weekday]} · ${escapeHtml(item.start)}–${escapeHtml(item.end)} <button type="button" data-toggle-schedule="${index}">${item.enabled === false ? 'Habilitar' : 'Inhabilitar'}</button> <button type="button" data-delete-schedule="${index}" aria-label="Quitar horario">×</button></span>`).join(' ') || '<p class="notice">Aún no configuraste horarios.</p>'; };
@@ -197,6 +205,141 @@
     }));
   }
 
+  async function renderProfessional() {
+    const [profile, data] = await Promise.all([api('/api/professional/me'), api('/api/appointments')]);
+    let professional = profile.professional;
+    let appointments = data.appointments;
+    let treatmentDraft = Array.isArray(professional.treatments)
+      ? professional.treatments.map(item => ({ ...item }))
+      : [{ id: '', name: professional.specialty, durationMinutes: professional.durationMinutes || 30, price: professional.price || 0, active: true }];
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const isInternal = professional.turnerMode === 'AURA_VITAL';
+    let calendarMonth = new Date(); calendarMonth.setDate(1);
+    let selectedAgendaDate = dateToday();
+    $('#portal-content').innerHTML = `<div class="professional-dashboard"><nav class="professional-side-nav" aria-label="Gestión profesional"><span class="eyebrow">Mi espacio</span><strong>${escapeHtml(professional.name)}</strong><button type="button" data-prof-tab="agenda">Agenda y horarios</button><button type="button" data-prof-tab="blocks">Bloqueos</button><button type="button" data-prof-tab="values">Tratamientos y valores</button><button type="button" data-prof-tab="appointments">Turnos reservados</button><div class="professional-side-foot">${escapeHtml(professional.specialty)}<button type="button" id="professional-logout-shortcut">Cerrar sesión</button></div></nav><section class="professional-workspace"><div class="professional-workspace-heading"><span class="eyebrow">Panel profesional · Aura Vital</span><h2>${escapeHtml(professional.specialty)}</h2><p>Administrá tu agenda, tus servicios y los valores de atención.</p></div><div id="professional-pane"></div></section></div>`;
+    const pane = $('#professional-pane');
+    const enabledSchedule = () => (professional.schedule || []).filter(item => item.enabled !== false);
+    const calendarDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const renderDateCalendar = () => {
+      const first = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+      const offset = (first.getDay() + 6) % 7;
+      const lastDay = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+      const blanks = Array.from({ length: offset }, (_, index) => `<span class="professional-calendar-blank" key="blank-${index}"></span>`).join('');
+      const dateButtons = Array.from({ length: lastDay }, (_, index) => {
+        const day = index + 1; const value = calendarDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day));
+        const override = (professional.dateSchedules || []).find(item => item.date === value);
+        const hasHours = override?.intervals?.some(item => item.enabled !== false);
+        return `<button type="button" class="professional-calendar-day${value === selectedAgendaDate ? ' selected' : ''}${hasHours ? ' has-hours' : ''}" data-calendar-date="${value}" ${value < dateToday() ? 'disabled' : ''}><span>${day}</span>${hasHours ? '<i aria-label="Tiene horarios"></i>' : ''}</button>`;
+      }).join('');
+      const monthName = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' }).format(calendarMonth);
+      const selected = (professional.dateSchedules || []).find(item => item.date === selectedAgendaDate);
+      const weekly = (professional.schedule || []).filter(item => Number(item.weekday) === new Date(`${selectedAgendaDate}T12:00:00Z`).getUTCDay() && item.enabled !== false);
+      const selectedRanges = selected?.intervals || [];
+      const currentRanges = selected ? selectedRanges : weekly;
+      const rangesHtml = currentRanges.map((item, index) => `<div class="professional-date-range${item.enabled === false ? ' disabled' : ''}"><span>${escapeHtml(item.start)} – ${escapeHtml(item.end)}${!selected ? ' · semanal' : ''}</span>${selected ? `<button type="button" data-date-range-toggle="${index}" aria-label="${item.enabled === false ? 'Habilitar' : 'Inhabilitar'} franja">${item.enabled === false ? 'Habilitar' : '×'}</button>` : ''}</div>`).join('') || `<p class="professional-date-empty">${selected ? 'No hay horarios específicos cargados para esta fecha.' : 'No hay horario semanal para este día.'}</p>`;
+      return `<div class="portal-panel professional-date-calendar-panel"><div class="professional-panel-heading"><div><h3>Días para turnos pactados</h3><p>Elegí una fecha del calendario y agregá las franjas disponibles para ese día.</p></div><span class="professional-live-badge">Fechas puntuales</span></div><div class="professional-date-calendar-layout"><div class="professional-month-calendar"><div class="professional-month-heading"><button type="button" data-calendar-month="-1" aria-label="Mes anterior">‹</button><strong>${escapeHtml(monthName)}</strong><button type="button" data-calendar-month="1" aria-label="Mes siguiente">›</button></div><div class="professional-month-grid">${['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(label => `<span class="professional-calendar-weekday">${label}</span>`).join('')}${blanks}${dateButtons}</div><div class="professional-calendar-legend"><span><i class="configured"></i>Con horarios puntuales</span><span><i></i>Sin configurar</span></div></div><div class="professional-date-editor"><span class="eyebrow">Disponibilidad puntual</span><h4>${escapeHtml(fmtDate(selectedAgendaDate))}</h4><div class="professional-date-ranges">${rangesHtml}</div>${selected ? '<button type="button" class="professional-reset-date" data-reset-date-schedule>Restablecer horario semanal</button>' : `<p class="professional-date-hint">${weekly.length ? 'Este día usa el horario semanal. Al agregar franjas, esta fecha tendrá su propia disponibilidad.' : 'Agregá una o más franjas para habilitar reservas en esta fecha.'}</p>`}<form id="professional-date-hours-form" class="portal-form professional-date-hours-form"><div class="field"><label>Desde</label><input name="start" type="time" value="09:00" required></div><div class="field"><label>Hasta</label><input name="end" type="time" value="13:00" required></div><button class="button">+ Agregar horario</button></form></div></div></div>`;
+    };
+    const showAgenda = () => {
+      if (!isInternal) {
+        pane.innerHTML = `<div class="portal-panel professional-external-note"><span class="eyebrow">Agenda externa</span><h3>Tu agenda se administra en BlipDoc</h3><p>Los horarios y reservas de esta especialidad se gestionan desde tu agenda externa. Los tratamientos y valores que configures en este panel se guardan en Aura Vital.</p>${professional.blipdocUrl ? `<a class="button" href="${escapeHtml(professional.blipdocUrl)}" target="_blank" rel="noopener noreferrer">Abrir BlipDoc ↗</a>` : ''}</div>`;
+        return;
+      }
+      const rows = days.map((day, weekday) => {
+        const entries = (professional.schedule || []).map((entry, index) => ({ ...entry, index })).filter(entry => Number(entry.weekday) === weekday);
+        const active = entries.some(entry => entry.enabled !== false);
+        return `<div class="professional-schedule-day${active ? '' : ' disabled'}"><div class="professional-day-label"><span class="professional-toggle${active ? ' on' : ''}" aria-hidden="true"></span><strong>${day}</strong></div><div class="professional-day-slots">${entries.length ? entries.map(entry => `<span class="professional-time-chip${entry.enabled === false ? ' disabled' : ''}">${escapeHtml(entry.start)} – ${escapeHtml(entry.end)}<button type="button" data-schedule-remove="${entry.index}" aria-label="Quitar horario">×</button></span>`).join('') : '<span class="professional-no-time">Sin horario</span>'}</div>${entries.length ? `<button class="professional-day-switch" type="button" data-schedule-toggle="${weekday}">${active ? 'Inhabilitar día' : 'Habilitar día'}</button>` : ''}</div>`;
+      }).join('');
+      pane.innerHTML = `${renderDateCalendar()}<div class="professional-content-grid"><div class="portal-panel professional-schedule-panel"><div class="professional-panel-heading"><div><h3>Horarios habituales</h3><p>Franjas semanales disponibles como base para tus turnos regulares.</p></div><span class="professional-live-badge">Agenda Aura Vital</span></div><div class="professional-schedule-list">${rows}</div><form id="professional-schedule-form" class="portal-form professional-add-hours"><div class="field"><label>Día</label><select name="weekday">${days.map((day, index) => `<option value="${index}">${day}</option>`).join('')}</select></div><div class="field"><label>Desde</label><input name="start" type="time" value="09:00" required></div><div class="field"><label>Hasta</label><input name="end" type="time" value="17:00" required></div><button class="button">Agregar horario</button></form><p class="professional-duration-note">Duración del turno: <strong>${professional.durationMinutes} min</strong> · Editala en Tratamientos y valores.</p></div><div class="portal-panel professional-schedule-help"><span class="eyebrow">Disponibilidad</span><h3>${enabledSchedule().length} franjas activas</h3><p>Los horarios semanales se aplican salvo en las fechas que configures en el calendario. Las reservas existentes se mantienen.</p><button type="button" class="button secondary" data-prof-tab="blocks">Administrar bloqueos</button></div></div>`;
+      $('#professional-schedule-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const schedule = [...(professional.schedule || []), formData(event.currentTarget)];
+        try { const result = await api('/api/professional/me/schedule', { method: 'PATCH', body: JSON.stringify({ schedule }) }); professional = result.professional; showAgenda(); toast('Horario agregado.'); }
+        catch (error) { toast(error.message); }
+      });
+      $('#professional-date-hours-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const next = [...(professional.dateSchedules || [])];
+        const existing = next.find(day => day.date === selectedAgendaDate);
+        const interval = formData(event.currentTarget);
+        if (existing) existing.intervals.push({ ...interval, enabled: true });
+        else next.push({ date: selectedAgendaDate, intervals: [{ ...interval, enabled: true }] });
+        try { const result = await api('/api/professional/me/date-schedule', { method: 'PATCH', body: JSON.stringify({ dateSchedules: next }) }); professional = result.professional; showAgenda(); toast('Disponibilidad para la fecha agregada.'); }
+        catch (error) { toast(error.message); }
+      });
+    };
+    const showBlocks = async () => {
+      if (!isInternal) { pane.innerHTML = '<div class="portal-panel professional-external-note"><span class="eyebrow">Agenda externa</span><h3>Los bloqueos se gestionan en BlipDoc</h3><p>Para bloquear vacaciones, licencias o franjas horarias, actualizá tu agenda externa.</p></div>'; return; }
+      try { const result = await api('/api/professional/me'); professional = result.professional; }
+      catch (error) { toast(error.message); }
+      pane.innerHTML = `<div class="professional-content-grid"><div class="portal-panel"><div class="professional-panel-heading"><div><h3>Días y horarios bloqueados</h3><p>Vacaciones, congresos o imprevistos: no se podrán reservar.</p></div></div><div class="professional-block-list">${(professional.blocks || []).map(block => `<article class="professional-block-item"><span><strong>${escapeHtml(fmtDate(block.date))}</strong><small>${block.allDay ? 'Todo el día' : `${escapeHtml(block.start)} – ${escapeHtml(block.end)}`}</small></span><button type="button" data-unblock="${escapeHtml(block.id)}" aria-label="Quitar bloqueo">×</button></article>`).join('') || '<p class="notice">Todavía no hay días bloqueados.</p>'}</div><form id="professional-block-form" class="portal-form professional-block-form"><div class="field"><label>Fecha</label><input name="date" type="date" min="${dateToday()}" required></div><div class="field"><label class="professional-checkbox-label"><input name="allDay" type="checkbox"> Todo el día</label></div><div class="field"><label>Desde</label><input name="start" type="time" value="09:00"></div><div class="field"><label>Hasta</label><input name="end" type="time" value="17:00"></div><button class="button secondary">+ Bloquear día u horario</button></form></div><div class="portal-panel professional-schedule-help"><span class="eyebrow">Tu agenda</span><h3>Bloqueos activos</h3><p>Al quitar un bloqueo, los horarios habituales vuelven a estar disponibles, excepto si ya fueron reservados.</p><button type="button" class="button secondary" data-prof-tab="agenda">Volver a horarios</button></div></div>`;
+      $('#professional-block-form').addEventListener('submit', async event => { event.preventDefault(); const values = formData(event.currentTarget); values.allDay = event.currentTarget.elements.allDay.checked; try { await api('/api/professional/me/blocks', { method: 'POST', body: JSON.stringify(values) }); toast('Bloqueo agregado.'); showBlocks(); } catch (error) { toast(error.message); } });
+    };
+    const readTreatmentRows = () => $$('#treatment-editor [data-treatment-row]').map(row => ({ id: row.dataset.treatmentId || '', name: $('[name="treatmentName"]', row).value.trim(), durationMinutes: Number($('[name="treatmentDuration"]', row).value), price: Number($('[name="treatmentPrice"]', row).value), active: $('[name="treatmentActive"]', row).checked }));
+    const renderTreatmentRows = () => {
+      const list = $('#treatment-list');
+      if (!list) return;
+      list.innerHTML = treatmentDraft.map((item, index) => `<article class="professional-treatment-row" data-treatment-row data-treatment-id="${escapeHtml(item.id || '')}"><label class="professional-treatment-active"><input name="treatmentActive" type="checkbox" ${item.active !== false ? 'checked' : ''}><span>Activo</span></label><div class="field"><label>Tratamiento / servicio</label><input name="treatmentName" value="${escapeHtml(item.name || '')}" maxlength="160" required></div><div class="field"><label>Duración (min)</label><input name="treatmentDuration" type="number" min="10" max="240" step="5" value="${Number(item.durationMinutes || 30)}" required></div><div class="field"><label>Valor ($)</label><input name="treatmentPrice" type="number" min="0" max="100000000" step="100" value="${Number(item.price || 0)}" required></div><button type="button" class="professional-remove-treatment" data-remove-treatment="${index}" aria-label="Eliminar tratamiento">×</button></article>`).join('') || '<p class="notice">Aún no publicaste tratamientos. Agregá los servicios que ofrecés.</p>';
+    };
+    const showValues = () => {
+      pane.innerHTML = `<div class="portal-panel professional-values-panel"><div class="professional-panel-heading"><div><h3>Tratamientos y valores</h3><p>Los valores se mostrarán junto a cada servicio al reservar.</p></div><span class="professional-live-badge">${isInternal ? 'Aura Vital' : 'Perfil profesional'}</span></div><form id="treatment-editor"><div id="treatment-list"></div><div class="professional-treatment-actions"><button type="button" class="button secondary" id="add-treatment">+ Agregar tratamiento</button><button type="submit" class="button" id="save-treatments">Guardar cambios</button></div></form><p class="professional-values-footnote">La duración y el valor del primer servicio también se usan como referencia general de tu agenda.</p></div>`;
+      renderTreatmentRows();
+      $('#add-treatment').addEventListener('click', () => { treatmentDraft = readTreatmentRows(); treatmentDraft.push({ id: '', name: '', durationMinutes: professional.durationMinutes || 30, price: 0, active: true }); renderTreatmentRows(); });
+      $('#treatment-list').addEventListener('click', event => { const button = event.target.closest('[data-remove-treatment]'); if (!button) return; treatmentDraft = readTreatmentRows(); treatmentDraft.splice(Number(button.dataset.removeTreatment), 1); renderTreatmentRows(); });
+      $('#treatment-editor').addEventListener('submit', async event => {
+        event.preventDefault();
+        const treatments = readTreatmentRows();
+        const primary = treatments.find(item => item.active) || treatments[0];
+        try {
+          const result = await api('/api/professional/me/settings', { method: 'PATCH', body: JSON.stringify({ price: primary?.price ?? professional.price ?? 0, durationMinutes: primary?.durationMinutes ?? professional.durationMinutes ?? 30, treatments }) });
+          professional = result.professional; treatmentDraft = professional.treatments; toast('Tratamientos y valores actualizados.'); showValues();
+        } catch (error) { toast(error.message); }
+      });
+    };
+    const showAppointments = () => {
+      pane.innerHTML = `<div class="portal-panel"><div class="professional-panel-heading"><div><h3>Turnos reservados</h3><p>Consultá y actualizá el estado de tus reservas.</p></div></div><div id="professional-appointments">${appointmentsTable(appointments, true)}</div></div>`;
+      $('#professional-appointments').addEventListener('change', async event => { const select = event.target.closest('[data-status-for]'); if (!select || !select.value) return; try { await api(`/api/appointments/${select.dataset.statusFor}/status`, { method: 'PATCH', body: JSON.stringify({ status: select.value }) }); toast('Estado del turno actualizado.'); const response = await api('/api/appointments'); appointments = response.appointments; showAppointments(); } catch (error) { toast(error.message); } });
+    };
+    const panels = { agenda: showAgenda, blocks: showBlocks, values: showValues, appointments: showAppointments };
+    const selectTab = async tab => {
+      if (!panels[tab]) return;
+      $$('.professional-side-nav [data-prof-tab]').forEach(button => { button.classList.toggle('active', button.dataset.profTab === tab); button.setAttribute('aria-current', button.dataset.profTab === tab ? 'page' : 'false'); });
+      await panels[tab]();
+    };
+    $('#professional-logout-shortcut').addEventListener('click', () => $('#logout-button').click());
+    $('.professional-side-nav').addEventListener('click', event => { const button = event.target.closest('[data-prof-tab]'); if (button) selectTab(button.dataset.profTab).catch(error => toast(error.message)); });
+    pane.addEventListener('click', async event => {
+      const dateButton = event.target.closest('[data-calendar-date]');
+      const monthButton = event.target.closest('[data-calendar-month]');
+      const rangeToggle = event.target.closest('[data-date-range-toggle]');
+      const resetDate = event.target.closest('[data-reset-date-schedule]');
+      const toggle = event.target.closest('[data-schedule-toggle]');
+      const remove = event.target.closest('[data-schedule-remove]');
+      const unblock = event.target.closest('[data-unblock]');
+      try {
+        if (dateButton) { selectedAgendaDate = dateButton.dataset.calendarDate; showAgenda(); }
+        else if (monthButton) {
+          calendarMonth.setMonth(calendarMonth.getMonth() + Number(monthButton.dataset.calendarMonth));
+          const first = calendarDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1));
+          selectedAgendaDate = first < dateToday() ? dateToday() : first;
+          showAgenda();
+        } else if (rangeToggle) {
+          const dateSchedules = [...(professional.dateSchedules || [])].map(day => day.date === selectedAgendaDate ? { ...day, intervals: day.intervals.map((interval, index) => index === Number(rangeToggle.dataset.dateRangeToggle) ? { ...interval, enabled: interval.enabled === false } : interval) } : day);
+          const result = await api('/api/professional/me/date-schedule', { method: 'PATCH', body: JSON.stringify({ dateSchedules }) }); professional = result.professional; showAgenda(); toast('Disponibilidad puntual actualizada.');
+        } else if (resetDate) {
+          const dateSchedules = (professional.dateSchedules || []).filter(day => day.date !== selectedAgendaDate);
+          const result = await api('/api/professional/me/date-schedule', { method: 'PATCH', body: JSON.stringify({ dateSchedules }) }); professional = result.professional; showAgenda(); toast('Se restauró el horario semanal para esa fecha.');
+        } else if (toggle) {
+          const weekday = Number(toggle.dataset.scheduleToggle); const schedule = (professional.schedule || []).map(item => Number(item.weekday) === weekday ? { ...item, enabled: item.enabled === false } : item);
+          const result = await api('/api/professional/me/schedule', { method: 'PATCH', body: JSON.stringify({ schedule }) }); professional = result.professional; showAgenda(); toast('Disponibilidad actualizada.');
+        } else if (remove) {
+          const schedule = (professional.schedule || []).filter((_, index) => index !== Number(remove.dataset.scheduleRemove));
+          const result = await api('/api/professional/me/schedule', { method: 'PATCH', body: JSON.stringify({ schedule }) }); professional = result.professional; showAgenda(); toast('Franja eliminada.');
+        } else if (unblock) { await api(`/api/professional/me/blocks/${unblock.dataset.unblock}`, { method: 'DELETE' }); toast('Bloqueo eliminado.'); showBlocks(); }
+      } catch (error) { toast(error.message); }
+    });
+    await selectTab('agenda');
+  }
+
   async function renderAdmin() {
     const [professionalsData, appointmentsData] = await Promise.all([api('/api/admin/professionals'), api('/api/appointments')]); let stats = await api('/api/admin/stats');
     $('#portal-content').innerHTML = `<div class="portal-nav"><button class="button small" data-admin-tab="overview">Resumen</button><button class="button secondary small" data-admin-tab="professionals">Profesionales</button><button class="button secondary small" data-admin-tab="appointments">Turnos</button><button class="button secondary small" data-admin-tab="settings">Reglas</button></div><div id="admin-view"></div>`;
@@ -204,9 +347,10 @@
     const showOverview = () => { view.innerHTML = `<div class="portal-grid"><div class="portal-panel"><span class="eyebrow">Turnos totales</span><h3>${stats.total}</h3></div><div class="portal-panel"><span class="eyebrow">Realizados</span><h3>${stats.completed}</h3></div><div class="portal-panel"><span class="eyebrow">Pendientes</span><h3>${stats.pending}</h3></div><div class="portal-panel"><span class="eyebrow">Cancelados</span><h3>${stats.cancelled}</h3></div><div class="portal-panel"><span class="eyebrow">Facturación interna</span><h3>$ ${Number(stats.revenue).toLocaleString('es-AR')}</h3></div><div class="portal-panel"><span class="eyebrow">BlipDoc externo</span><h3>${stats.externalAppointments}</h3><p>Sin integración de reservas/facturación externas.</p></div></div><div class="portal-panel"><h3>Estadísticas por profesional</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Profesional</th><th>Turnero</th><th>Total</th><th>Realizados</th><th>Cancelados</th><th>Pendientes</th><th>Facturación</th></tr></thead><tbody>${stats.byProfessional.map(item => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.turnerMode)}</td><td>${item.total}</td><td>${item.completed}</td><td>${item.cancelled}</td><td>${item.pending}</td><td>$ ${Number(item.revenue).toLocaleString('es-AR')}</td></tr>`).join('')}</tbody></table></div></div><div class="portal-panel"><h3>Facturación mensual</h3>${stats.byPeriod.map(item => `<p>${escapeHtml(item.period)} · ${item.appointments} turnos · $ ${Number(item.revenue).toLocaleString('es-AR')}</p>`).join('') || '<p class="notice">Sin actividad para el período.</p>'}</div>`; };
     const showProfessionals = () => {
       view.innerHTML = `<div class="portal-panel"><h3>Dar de alta profesional</h3><form id="new-professional" class="portal-form"><div class="field"><label>Nombre y apellido</label><input name="name" required></div><div class="field"><label>Especialidad</label><input name="specialty" required></div><div class="field"><label>Email de acceso</label><input name="email" type="email" required></div><div class="field"><label>Contraseña inicial (mínimo 10)</label><input name="password" type="password" minlength="10" required></div><div class="field"><label>Precio</label><input name="price" type="number" min="0" step="0.01" required></div><div class="field"><label>Duración (minutos)</label><input name="durationMinutes" type="number" min="10" max="240" step="5" value="30" required></div><div class="field"><label>Modalidad</label><select name="turnerMode"><option value="AURA_VITAL">Turnero Aura Vital</option><option value="BLIPDOC">BlipDoc</option></select></div><div class="field"><label>Enlace BlipDoc (HTTPS)</label><input name="blipdocUrl" type="url" placeholder="https://..."></div><div class="field full"><label>Descripción</label><textarea name="description" rows="3"></textarea></div><div class="field full"><label>Foto (URL)</label><input name="photo" type="url"></div><button class="button full">Crear profesional</button></form></div><div class="portal-panel"><h3>Equipo profesional</h3>${professionalsData.professionals.map(item => `<article class="profile-card"><strong>${escapeHtml(item.name)}</strong> · ${escapeHtml(item.specialty)} · ${item.active ? 'Activo' : 'Inactivo'} · ${escapeHtml(item.turnerMode)}<form class="professional-edit portal-form" data-professional="${escapeHtml(item.id)}"><div class="field"><label>Modalidad</label><select name="turnerMode"><option value="AURA_VITAL" ${item.turnerMode === 'AURA_VITAL' ? 'selected' : ''}>Aura Vital</option><option value="BLIPDOC" ${item.turnerMode === 'BLIPDOC' ? 'selected' : ''}>BlipDoc</option></select></div><div class="field"><label>Enlace externo</label><input name="blipdocUrl" type="url" value="${escapeHtml(item.blipdocUrl || '')}"></div><div class="field"><label>Precio</label><input name="price" type="number" min="0" step="0.01" value="${Number(item.price)}"></div><div class="field"><label>Duración</label><input name="durationMinutes" type="number" min="10" max="240" value="${Number(item.durationMinutes)}"></div><div class="field"><label>Estado</label><select name="active"><option value="true" ${item.active ? 'selected' : ''}>Activo</option><option value="false" ${!item.active ? 'selected' : ''}>Inactivo</option></select></div><button class="button small">Guardar</button></form></article>`).join('') || '<p class="notice">Todavía no hay profesionales dados de alta.</p>'}</div>`;
-      professionalsData.professionals.forEach(item => { const form = $(`.professional-edit[data-professional="${item.id}"]`); if (!form) return; form.insertAdjacentHTML('afterbegin', `<div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(item.name)}" required></div><div class="field"><label>Especialidad</label><input name="specialty" value="${escapeHtml(item.specialty)}" required></div><div class="field"><label>Email de acceso</label><input name="email" type="email" value="${escapeHtml(item.email || '')}" required></div><div class="field"><label>Cambiar contraseña (opcional)</label><input name="password" type="password" minlength="10" autocomplete="new-password"></div><div class="field full"><label>Descripción</label><textarea name="description" rows="2">${escapeHtml(item.description || '')}</textarea></div><div class="field full"><label>Foto (URL)</label><input name="photo" type="url" value="${escapeHtml(item.photo || '')}"></div>`); });
-      $('#new-professional').addEventListener('submit', async event => { event.preventDefault(); const data = formData(event.target); data.price = Number(data.price); data.durationMinutes = Number(data.durationMinutes); try { await api('/api/admin/professionals', { method: 'POST', body: JSON.stringify(data) }); toast('Profesional creado.'); await loadProfessionals(); renderPortal(); } catch (error) { toast(error.message); } });
-      $$('.professional-edit').forEach(form => form.addEventListener('submit', async event => { event.preventDefault(); const data = formData(form); data.active = data.active === 'true'; data.price = Number(data.price); data.durationMinutes = Number(data.durationMinutes); try { await api(`/api/admin/professionals/${form.dataset.professional}`, { method: 'PATCH', body: JSON.stringify(data) }); toast('Profesional actualizado.'); await loadProfessionals(); renderPortal(); } catch (error) { toast(error.message); } }));
+      $('#new-professional').querySelectorAll('[name="price"], [name="durationMinutes"]').forEach(input => input.closest('.field')?.remove());
+      professionalsData.professionals.forEach(item => { const form = $(`.professional-edit[data-professional="${item.id}"]`); if (!form) return; form.insertAdjacentHTML('afterbegin', `<div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(item.name)}" required></div><div class="field"><label>Especialidad</label><input name="specialty" value="${escapeHtml(item.specialty)}" required></div><div class="field"><label>Email de acceso</label><input name="email" type="email" value="${escapeHtml(item.email || '')}" required></div><div class="field"><label>Cambiar contraseña (opcional)</label><input name="password" type="password" minlength="10" autocomplete="new-password"></div><div class="field full"><label>Descripción</label><textarea name="description" rows="2">${escapeHtml(item.description || '')}</textarea></div><div class="field full"><label>Foto (URL)</label><input name="photo" type="url" value="${escapeHtml(item.photo || '')}"></div>`); form.querySelectorAll('[name="price"], [name="durationMinutes"]').forEach(input => input.closest('.field')?.remove()); });
+      $('#new-professional').addEventListener('submit', async event => { event.preventDefault(); const data = formData(event.target); try { await api('/api/admin/professionals', { method: 'POST', body: JSON.stringify(data) }); toast('Profesional creado. El profesional podrá cargar sus tratamientos y valores desde su cuenta.'); await loadProfessionals(); renderPortal(); } catch (error) { toast(error.message); } });
+      $$('.professional-edit').forEach(form => form.addEventListener('submit', async event => { event.preventDefault(); const data = formData(form); data.active = data.active === 'true'; try { await api(`/api/admin/professionals/${form.dataset.professional}`, { method: 'PATCH', body: JSON.stringify(data) }); toast('Profesional actualizado.'); await loadProfessionals(); renderPortal(); } catch (error) { toast(error.message); } }));
       professionalsData.professionals.filter(item => item.turnerMode === 'AURA_VITAL').forEach(professional => {
         const edit = $(`.professional-edit[data-professional="${professional.id}"]`); if (!edit) return;
         edit.insertAdjacentHTML('afterend', `<form class="admin-schedule-form portal-form" data-schedule-professional="${escapeHtml(professional.id)}"><strong class="field full">Disponibilidad semanal</strong><div class="field"><label>Día</label><select name="weekday"><option value="1">Lunes</option><option value="2">Martes</option><option value="3">Miércoles</option><option value="4">Jueves</option><option value="5">Viernes</option><option value="6">Sábado</option><option value="0">Domingo</option></select></div><div class="field"><label>Desde</label><input name="start" type="time" value="09:00" required></div><div class="field"><label>Hasta</label><input name="end" type="time" value="17:00" required></div><button class="button small">Agregar horario</button><div class="field full">${(professional.schedule || []).map((item, index) => `<span class="tag">${['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][item.weekday]} ${escapeHtml(item.start)}–${escapeHtml(item.end)} <button type="button" data-admin-toggle="${index}">${item.enabled === false ? 'Habilitar' : 'Inhabilitar'}</button> <button type="button" data-admin-remove="${index}">×</button></span>`).join('') || 'Sin horarios todavía'}</div></form><form class="admin-block-form portal-form" data-block-professional="${escapeHtml(professional.id)}"><strong class="field full">Bloquear disponibilidad</strong><div class="field"><label>Fecha</label><input name="date" type="date" min="${dateToday()}" required></div><div class="field"><label><input name="allDay" type="checkbox"> Día completo</label></div><div class="field"><label>Desde</label><input name="start" type="time" value="09:00"></div><div class="field"><label>Hasta</label><input name="end" type="time" value="17:00"></div><button class="button secondary small">Crear bloqueo</button><div class="field full">${(professional.blocks || []).map(block => `<span class="tag">${escapeHtml(fmtDate(block.date))} ${block.allDay ? 'día completo' : `${escapeHtml(block.start)}–${escapeHtml(block.end)}`} <button type="button" data-remove-block="${escapeHtml(block.id)}">Quitar</button></span>`).join('')}</div></form>`);

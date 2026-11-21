@@ -3,15 +3,32 @@
   "version": "1.0.0",
   "private": true,
   "description": "Sistema local de turnos Aura Vital",
-  "main": "server.js",
+  "main": "backend/main.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "create-admin": "node scripts/create-admin.js",
+    "start": "npm run build && node backend/main.js",
+    "dev": "concurrently -k -n API,WEB \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:frontend": "vite frontend --config frontend/vite.config.mjs --host 127.0.0.1",
+    "dev:server": "node --watch backend/main.js",
+    "build": "npm run build:frontend",
+    "build:frontend": "vite build frontend --config frontend/vite.config.mjs",
+    "start:server": "node backend/main.js",
+    "create-admin": "node backend/scripts/create-admin.js",
     "test": "node --test"
   },
   "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-express": "^11.1.6",
     "express": "^5.1.0",
-    "mongodb": "^7.9.0"
+    "mongodb": "^7.9.0",
+    "reflect-metadata": "^0.2.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
+    "concurrently": "^9.2.1",
+    "vite": "^8.3.8"
   }
 }

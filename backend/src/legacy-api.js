@@ -1,10 +1,8 @@
 const express = require('express');
-const fs = require('node:fs');
-const path = require('node:path');
 const crypto = require('node:crypto');
-const { root, port, timezone } = require('./lib/config');
-const { store } = require('./lib/store');
-const { hashPassword, verifyPassword, setSession, clearSession, sessionUserId } = require('./lib/auth');
+const { timezone } = require('../lib/config');
+const { store } = require('../lib/store');
+const { hashPassword, verifyPassword, setSession, clearSession, sessionUserId } = require('../lib/auth');
 
 const app = express();
 const ACTIVE_APPOINTMENT_STATES = new Set(['pending', 'confirmed']);
@@ -40,11 +38,19 @@ app.use('/api', (req, res, next) => {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, ...safe } = user;
+  const { passwordHash, dni, birthDate, phone, ...safe } = user;
   return safe;
 }
 
+function privateUser(user) {
+  if (!user) return null;
+  return { ...publicUser(user), dni: user.dni || '', birthDate: user.birthDate || '', phone: user.phone || '' };
+}
+
 function publicProfessional(professional, user, includePrivate = false) {
+  const treatments = Array.isArray(professional.treatments)
+    ? professional.treatments
+    : [{ id: 'default', name: professional.specialty, durationMinutes: professional.durationMinutes, price: professional.price, active: true }];
   return {
     id: professional.id,
     name: professional.name,
@@ -53,11 +59,13 @@ function publicProfessional(professional, user, includePrivate = false) {
     photo: professional.photo,
     price: professional.price,
     durationMinutes: professional.durationMinutes,
+    treatments: treatments.filter(item => includePrivate || item.active !== false),
     active: professional.active,
     turnerMode: professional.turnerMode,
     blipdocUrl: professional.turnerMode === 'BLIPDOC' ? professional.blipdocUrl : null,
     email: includePrivate ? (user?.email || null) : undefined,
     schedule: includePrivate ? (professional.schedule || []) : undefined,
+    dateSchedules: includePrivate ? (professional.dateSchedules || []) : undefined,
     blocks: includePrivate ? (professional.blocks || []) : undefined,
   };
 }
@@ -122,13 +130,31 @@ function validSchedule(schedule) {
   }
   return true;
 }
+function validDateSchedules(dateSchedules) {
+  if (!Array.isArray(dateSchedules) || dateSchedules.length > 366) return false;
+  const dates = new Set(); const today = nowArgentinaParts().date;
+  for (const day of dateSchedules) {
+    if (!parseDate(day.date) || day.date < today || day.date > new Date(Date.now() + 366 * 86400000).toISOString().slice(0, 10) || dates.has(day.date) || !Array.isArray(day.intervals) || day.intervals.length > 10) return false;
+    dates.add(day.date);
+    const ranges = [];
+    for (const interval of day.intervals) {
+      const start = timeMinutes(interval.start); const end = timeMinutes(interval.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false;
+      if (ranges.some(range => overlaps(start, end, range.start, range.end))) return false;
+      ranges.push({ start, end });
+    }
+  }
+  return true;
+}
 
-function listSlots(db, professional, date) {
+function listSlots(db, professional, date, durationOverride) {
   const weekday = weekdayFor(date);
   if (weekday === undefined) return [];
-  const daySchedules = professional.schedule.filter(item => Number(item.weekday) === weekday && item.enabled !== false);
+  const dateSchedule = (professional.dateSchedules || []).find(item => item.date === date);
+  const scheduleForDate = dateSchedule ? dateSchedule.intervals : professional.schedule.filter(item => Number(item.weekday) === weekday);
+  const daySchedules = scheduleForDate.filter(item => item.enabled !== false);
   const slots = [];
-  const duration = Number(professional.durationMinutes);
+  const duration = Number(durationOverride ?? professional.durationMinutes);
   if (!Number.isInteger(duration) || duration < 10 || duration > 240) return slots;
   for (const schedule of daySchedules) {
     let start = timeMinutes(schedule.start);
@@ -151,23 +177,29 @@ function listSlots(db, professional, date) {
   return slots.sort((a, b) => a.time.localeCompare(b.time));
 }
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, persistence: store.constructor.name === 'MongoStore' ? 'mongodb' : 'local-json', timezone }));
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const firstName = cleanText(req.body.firstName, 80);
     const lastName = cleanText(req.body.lastName, 80);
     const email = cleanText(req.body.email, 254).toLowerCase();
     const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const dni = cleanText(req.body.dni, 12);
+    const birthDate = cleanText(req.body.birthDate, 10);
+    const phone = cleanText(req.body.phone, 24);
     if (!firstName || !lastName || !EMAIL_RE.test(email) || password.length < 10 || password.length > 200) return res.status(400).json({ error: 'Completá nombre, apellido, email y una contraseña de al menos 10 caracteres.' });
+    if (dni && !/^\d{7,8}$/.test(dni)) return res.status(400).json({ error: 'El DNI debe tener 7 u 8 números.' });
+    if (birthDate && (!parseDate(birthDate) || birthDate >= nowArgentinaParts().date)) return res.status(400).json({ error: 'Ingresá una fecha de nacimiento válida.' });
+    if (phone && !/^[+\d() .-]{8,24}$/.test(phone)) return res.status(400).json({ error: 'Ingresá un teléfono válido con código de área.' });
     const user = await store.update(async db => {
       if (db.users.some(item => item.email === email)) { const error = new Error('Ya existe una cuenta con ese email.'); error.status = 409; throw error; }
-      const created = { id: id(), firstName, lastName, name: `${firstName} ${lastName}`, email, role: 'PATIENT', active: true, createdAt: new Date().toISOString(), passwordHash: await hashPassword(password) };
+      if (dni && db.users.some(item => item.dni === dni)) { const error = new Error('Ya existe una cuenta con ese DNI. Iniciá sesión o escribinos para recibir ayuda.'); error.status = 409; throw error; }
+      const created = { id: id(), firstName, lastName, name: `${firstName} ${lastName}`, email, ...(dni ? { dni } : {}), ...(birthDate ? { birthDate } : {}), ...(phone ? { phone } : {}), role: 'PATIENT', active: true, createdAt: new Date().toISOString(), passwordHash: await hashPassword(password) };
       db.users.push(created);
       audit(db, created, 'patient.registered');
       return created;
     });
     setSession(res, user.id);
-    res.status(201).json({ user: publicUser(user) });
+    res.status(201).json({ user: privateUser(user) });
   } catch (error) { next(error); }
 });
 app.post('/api/auth/login', async (req, res, next) => {
@@ -184,11 +216,11 @@ app.post('/api/auth/login', async (req, res, next) => {
     }
     loginAttempts.delete(address);
     setSession(res, user.id);
-    res.json({ user: publicUser(user) });
+    res.json({ user: privateUser(user) });
   } catch (error) { next(error); }
 });
 app.post('/api/auth/logout', (_req, res) => { clearSession(res); res.status(204).end(); });
-app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user) }));
+app.get('/api/auth/me', (req, res) => res.json({ user: privateUser(req.user) }));
 app.patch('/api/profile', requireRole('PATIENT'), async (req, res, next) => {
   try {
     const firstName = cleanText(req.body.firstName, 80);
@@ -229,25 +261,31 @@ app.get('/api/professionals/:id/availability', async (req, res) => {
   const professional = db.professionals.find(item => item.id === req.params.id && item.active);
   if (!professional) return res.status(404).json({ error: 'Profesional no encontrado.' });
   if (professional.turnerMode !== 'AURA_VITAL') return res.status(409).json({ error: 'Este profesional gestiona turnos desde un turnero externo.', externalUrl: professional.blipdocUrl });
+  const treatments = publicProfessional(professional).treatments;
+  const treatment = req.query.treatmentId ? treatments.find(item => item.id === req.query.treatmentId) : null;
+  if (req.query.treatmentId && !treatment) return res.status(400).json({ error: 'El tratamiento elegido ya no está disponible. Elegí otro.' });
   const from = parseDate(req.query.from) ? req.query.from : nowArgentinaParts().date;
   const fromDate = parseDate(from);
   const to = parseDate(req.query.to) ? req.query.to : new Date(fromDate.getTime() + 14 * 86400000).toISOString().slice(0, 10);
   if (to < from || to > new Date(fromDate.getTime() + 90 * 86400000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'El rango solicitado debe ser de hasta 90 días.' });
   const slots = [];
-  for (let day = fromDate; day <= parseDate(to); day = new Date(day.getTime() + 86400000)) slots.push(...listSlots(db, professional, day.toISOString().slice(0, 10)));
-  res.json({ professional: publicProfessional(professional), slots, timezone });
+  for (let day = fromDate; day <= parseDate(to); day = new Date(day.getTime() + 86400000)) slots.push(...listSlots(db, professional, day.toISOString().slice(0, 10), treatment?.durationMinutes));
+  res.json({ professional: publicProfessional(professional), treatment, slots, timezone });
 });
 
 app.post('/api/appointments', requireRole('PATIENT'), async (req, res, next) => {
   try {
-    const { professionalId, date, time } = req.body;
+    const { professionalId, date, time, treatmentId } = req.body;
     if (!parseDate(date) || !/^\d{2}:\d{2}$/.test(time || '')) return res.status(400).json({ error: 'Seleccioná una fecha y un horario válidos.' });
     const appointment = await store.update(db => {
       const professional = db.professionals.find(item => item.id === professionalId && item.active && item.turnerMode === 'AURA_VITAL');
       if (!professional) { const error = new Error('El profesional no está disponible para reservas internas.'); error.status = 409; throw error; }
-      const slot = listSlots(db, professional, date).find(item => item.time === time);
+      const treatments = publicProfessional(professional).treatments;
+      const treatment = treatmentId ? treatments.find(item => item.id === treatmentId) : treatments[0];
+      if (!treatment) { const error = new Error('El tratamiento elegido ya no está disponible. Elegí otro.'); error.status = 409; throw error; }
+      const slot = listSlots(db, professional, date, treatment.durationMinutes).find(item => item.time === time);
       if (!slot) { const error = new Error('Ese horario ya no está disponible. Elegí otro.'); error.status = 409; throw error; }
-      const created = { id: id(), professionalId, patientId: req.user.id, date, time, startAt: slot.startAt, endAt: slot.endAt, price: Number(professional.price), status: 'pending', source: 'AURA_VITAL', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      const created = { id: id(), professionalId, patientId: req.user.id, date, time, startAt: slot.startAt, endAt: slot.endAt, price: Number(treatment.price), treatmentId: treatment.id, treatmentName: treatment.name, durationMinutes: Number(treatment.durationMinutes), status: 'pending', source: 'AURA_VITAL', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       db.appointments.push(created);
       audit(db, req.user, 'appointment.created', { appointmentId: created.id, professionalId, date, time });
       return created;
@@ -375,6 +413,23 @@ app.get('/api/professional/me', requireRole('PROFESSIONAL'), async (req, res) =>
   if (!professional) return res.status(404).json({ error: 'No se encontró el perfil profesional.' });
   res.json({ professional: publicProfessional(professional, req.user, true) });
 });
+app.patch('/api/professional/me/settings', requireRole('PROFESSIONAL'), async (req, res, next) => {
+  try {
+    const { price, durationMinutes, treatments } = req.body;
+    const numericPrice = Number(price); const numericDuration = Number(durationMinutes);
+    if (!Number.isFinite(numericPrice) || numericPrice < 0 || numericPrice > 100000000 || !Number.isInteger(numericDuration) || numericDuration < 10 || numericDuration > 240) return res.status(400).json({ error: 'Ingresá un valor válido y una duración entre 10 y 240 minutos.' });
+    if (!Array.isArray(treatments) || treatments.length > 30 || treatments.some(item => !cleanText(item.name, 160) || !Number.isFinite(Number(item.price)) || Number(item.price) < 0 || Number(item.price) > 100000000 || !Number.isInteger(Number(item.durationMinutes)) || Number(item.durationMinutes) < 10 || Number(item.durationMinutes) > 240)) return res.status(400).json({ error: 'Revisá los tratamientos: cada uno necesita nombre, valor válido y duración entre 10 y 240 minutos.' });
+    const professional = await store.update(db => {
+      const own = getProfessionalForUser(db, req.user);
+      if (!own || !own.active) { const error = new Error('Perfil profesional no encontrado o inactivo.'); error.status = 404; throw error; }
+      own.treatments = treatments.map(item => ({ id: cleanText(item.id, 80) || id(), name: cleanText(item.name, 160), durationMinutes: Number(item.durationMinutes), price: Number(item.price), active: item.active !== false }));
+      own.price = numericPrice; own.durationMinutes = numericDuration;
+      audit(db, req.user, 'professional.treatments.updated', { professionalId: own.id, treatmentCount: own.treatments.length });
+      return publicProfessional(own, req.user, true);
+    });
+    res.json({ professional });
+  } catch (error) { next(error); }
+});
 app.patch('/api/professional/me/schedule', requireRole('PROFESSIONAL'), async (req, res, next) => {
   try {
     const schedule = req.body.schedule;
@@ -387,6 +442,28 @@ app.patch('/api/professional/me/schedule', requireRole('PROFESSIONAL'), async (r
       return own;
     });
     res.json({ professional: publicProfessional(professional, req.user, true) });
+  } catch (error) { next(error); }
+});
+app.patch('/api/professional/me/date-schedule', requireRole('PROFESSIONAL'), async (req, res, next) => {
+  try {
+    const dateSchedules = req.body.dateSchedules;
+    if (!validDateSchedules(dateSchedules)) return res.status(400).json({ error: 'Revisá las fechas y franjas: no deben superponerse y solo se puede programar hasta un año por adelantado.' });
+    const professional = await store.update(db => {
+      const own = getProfessionalForUser(db, req.user);
+      if (!own || !own.active || own.turnerMode !== 'AURA_VITAL') { const error = new Error('La agenda por fecha solo está habilitada para el turnero Aura Vital.'); error.status = 409; throw error; }
+      const normalized = dateSchedules.map(day => ({ date: day.date, intervals: day.intervals.map(interval => ({ start: interval.start, end: interval.end, enabled: interval.enabled !== false })) }));
+      for (const appointment of db.appointments.filter(item => item.professionalId === own.id && ACTIVE_APPOINTMENT_STATES.has(item.status))) {
+        const weekday = weekdayFor(appointment.date);
+        const day = normalized.find(item => item.date === appointment.date);
+        const ranges = day ? day.intervals : (own.schedule || []).filter(item => Number(item.weekday) === weekday);
+        const start = timeMinutes(appointment.time); const end = start + Number(appointment.durationMinutes || own.durationMinutes || 30);
+        if (!ranges.some(range => range.enabled !== false && timeMinutes(range.start) <= start && timeMinutes(range.end) >= end)) { const error = new Error(`La fecha ${appointment.date} tiene un turno reservado. Conservá su franja o reprogramá el turno antes de guardar.`); error.status = 409; throw error; }
+      }
+      own.dateSchedules = normalized;
+      audit(db, req.user, 'professional.date-schedule.updated', { professionalId: own.id, days: normalized.length });
+      return publicProfessional(own, req.user, true);
+    });
+    res.json({ professional });
   } catch (error) { next(error); }
 });
 app.post('/api/professional/me/blocks', requireRole('PROFESSIONAL'), async (req, res, next) => {
@@ -426,7 +503,7 @@ app.post('/api/admin/professionals', requireRole('ADMIN'), async (req, res, next
   try {
     const name = cleanText(req.body.name, 160); const specialty = cleanText(req.body.specialty, 120);
     const email = cleanText(req.body.email, 254).toLowerCase(); const password = typeof req.body.password === 'string' ? req.body.password : '';
-    const price = Number(req.body.price); const durationMinutes = Number(req.body.durationMinutes);
+    const price = 0; const durationMinutes = 30;
     const turnerMode = req.body.turnerMode;
     if (!name || !specialty || !EMAIL_RE.test(email) || password.length < 10 || !Number.isFinite(price) || price < 0 || !Number.isInteger(durationMinutes) || durationMinutes < 10 || durationMinutes > 240 || !['AURA_VITAL', 'BLIPDOC'].includes(turnerMode) || (req.body.schedule && !validSchedule(req.body.schedule))) return res.status(400).json({ error: 'Completá los datos del profesional, email, contraseña, precio, duración y modalidad.' });
     const record = await store.update(async db => {
@@ -464,8 +541,6 @@ app.patch('/api/admin/professionals/:id', requireRole('ADMIN'), async (req, res,
         user.passwordHash = await hashPassword(req.body.password);
       }
       if (user && req.body.name !== undefined) { const [firstName, ...lastName] = professional.name.split(/\s+/); user.name = professional.name; user.firstName = firstName; user.lastName = lastName.join(' '); }
-      if (req.body.price !== undefined && Number.isFinite(Number(req.body.price)) && Number(req.body.price) >= 0) professional.price = Number(req.body.price);
-      if (req.body.durationMinutes !== undefined && Number.isInteger(Number(req.body.durationMinutes)) && Number(req.body.durationMinutes) >= 10 && Number(req.body.durationMinutes) <= 240) professional.durationMinutes = Number(req.body.durationMinutes);
       if (req.body.active !== undefined) professional.active = Boolean(req.body.active);
       professional.turnerMode = nextMode;
       if (user) user.active = professional.active;
@@ -550,18 +625,10 @@ app.patch('/api/admin/settings', requireRole('ADMIN'), async (req, res, next) =>
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Ruta de API no encontrada.' }));
-app.use(express.static(root, { extensions: ['html'] }));
-app.get('*path', (_req, res) => res.sendFile(path.join(root, 'index.html')));
 app.use((error, _req, res, _next) => {
   const status = Number(error.status) || 500;
   if (status >= 500) console.error(`${error.name || 'Error'}: ${String(error.message || '').replace(/mongodb(?:\+srv)?:\/\/[^@/]+@/gi, 'mongodb://***@').slice(0, 300)}`);
   res.status(status).json({ error: status >= 500 ? 'Ocurrió un error interno. Intentá nuevamente.' : error.message });
 });
 
-Promise.resolve(store.ready ? store.ready() : fs.promises.mkdir(path.dirname(require('./lib/config').dataFile), { recursive: true }))
-  .then(() => app.listen(port, '127.0.0.1', () => {
-    const persistence = store.constructor.name === 'MongoStore' ? `MongoDB (${require('./lib/config').mongoDbName})` : `archivo JSON local (${require('./lib/config').dataFile})`;
-    console.log(`Aura Vital local disponible en http://localhost:${port}`);
-    console.log(`Persistencia: ${persistence} · zona horaria ${timezone}`);
-  }))
-  .catch(error => { console.error(`No se pudo iniciar la persistencia (${error.name || 'Error'}). Revisá .env y el acceso a la base.`); process.exitCode = 1; });
+module.exports = app;

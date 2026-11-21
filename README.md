@@ -1,36 +1,48 @@
-# Aura Vital · sistema local de turnos
+# Aura Vital · turnos
 
-La web existente se sirve como SPA desde el mismo servidor. La configuración local activa usa MongoDB Atlas con las credenciales privadas de `.env`.
+Aplicación separada en un frontend React/Vite y un backend NestJS. La persistencia compatible con la versión anterior permanece en MongoDB o JSON local.
 
-## Iniciar en la computadora
+## Estructura
+
+```text
+frontend/                 React, Vite, estilos y recursos públicos
+backend/
+  main.js                 Bootstrap de NestJS y servidor estático de producción
+  src/app.module.js       Módulo principal de NestJS
+  src/health.controller.js Endpoint de salud de NestJS
+  src/legacy-api.js       Adaptador temporal de las rutas existentes
+  lib/                    Configuración, autenticación y almacenamiento
+  scripts/                Herramientas administrativas
+tests/                    Pruebas de integración
+```
+
+NestJS inicia el servidor y publica el endpoint de salud. Las rutas existentes se mantienen detrás de un adaptador Express de compatibilidad para que la migración no rompa autenticación, turnos ni la conexión de datos; ese adaptador queda aislado en `backend/src/legacy-api.js`.
+
+## Desarrollo
 
 ```bash
 npm install
-npm run create-admin
+npm run dev
+```
+
+Frontend: `http://127.0.0.1:5173`. Backend NestJS/API: `http://127.0.0.1:4173`.
+
+Para crear el primer administrador, ejecutá `npm run create-admin` en otra terminal.
+
+## Producción local
+
+```bash
 npm start
 ```
 
-Abrí `http://localhost:4173`. El primer administrador se crea de forma explícita desde el terminal; no se genera una cuenta con contraseña conocida. Los pacientes se registran desde **Ingresar → Crear cuenta** y el administrador puede crear las cuentas de profesionales desde su panel.
+Esto compila `frontend/` y NestJS sirve la aplicación en `http://127.0.0.1:4173`.
 
-## Configuración
+## Configuración y pruebas
 
-`.env` es local y está excluido de Git. La configuración activa es:
-
-```env
-DATA_STORE=mongodb
-MONGODB_URI=mongodb+srv://...
-MONGODB_DB=auravital
-MONGODB_DNS_SERVERS=1.1.1.1,8.8.8.8
-```
-
-MongoDB debe permitir conexión desde la computadora y soportar transacciones (como Atlas). El servidor queda limitado a `127.0.0.1`. El secreto de sesión se genera y conserva dentro de `.data/session-secret`, excluido de Git. Cambiar de JSON a MongoDB no copia automáticamente datos anteriores del archivo local.
-
-El archivo JSON y las cuentas creadas en esta modalidad son para desarrollo local. No uses esa persistencia para exponer información real de pacientes en producción.
-
-## Pruebas
+La configuración privada permanece en `.env` (excluido de Git). Las variables principales son `DATA_STORE`, `MONGODB_URI`, `MONGODB_DB`, `MONGODB_DNS_SERVERS` y `PORT`. MongoDB debe permitir transacciones. El servidor escucha en `127.0.0.1` y conserva el secreto de sesión en `.data/session-secret`.
 
 ```bash
 npm test
 ```
 
-Las pruebas crean datos temporales aislados y comprueban autenticación, control de roles, privacidad de turnos, reservas simultáneas y modalidad BlipDoc.
+Las pruebas crean datos temporales aislados y comprueban autenticación, permisos, privacidad, disponibilidad, reservas simultáneas y agendas BlipDoc.

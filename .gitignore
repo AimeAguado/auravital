@@ -1,4 +1,6 @@
 .env
 .data/
 node_modules/
+dist/
+/frontend/dist/
 npm-debug.log*

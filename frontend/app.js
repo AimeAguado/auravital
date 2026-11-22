@@ -403,4 +403,48 @@
     await loadProfessionals();
     if (state.user) updateAccountButton();
   })();
+
+  async function loadGoogleReviews() {
+    const reviewList = $('#google-reviews');
+    const ratingSummary = $('#google-rating-summary');
+    if (!reviewList) return;
+    const showReviewSamples = () => {
+      const samples = [
+        { author: 'Perfil de ejemplo', text: 'Un espacio cálido y cuidado, donde cada detalle invita a sentirse cómoda.' },
+        { author: 'Perfil de ejemplo', text: 'La atención cercana y el ambiente tranquilo hacen que la visita se sienta especial.' },
+        { author: 'Perfil de ejemplo', text: 'Un consultorio hermoso y acogedor, pensado para que te sientas bien acompañada.' },
+      ];
+      reviewList.innerHTML = samples.map(review => `<article class="google-review-card google-review-sample"><span class="google-review-demo-label">Ejemplo ficticio · No publicado en Google</span><div class="google-review-meta"><span class="google-review-stars" aria-label="5 de 5 estrellas">★★★★★</span><span class="google-review-date">5.0</span></div><blockquote>${escapeHtml(review.text)}</blockquote><div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">E</span><strong>${escapeHtml(review.author)}</strong></div></article>`).join('');
+    };
+    try {
+      const response = await fetch('/api/reviews');
+      if (!response.ok) throw new Error('No pudimos consultar las reseñas.');
+      const data = await response.json();
+      if (data.rating) {
+        ratingSummary.hidden = false;
+        ratingSummary.innerHTML = `<strong>★ ${Number(data.rating).toFixed(1)}</strong><span>·</span><span>${Number(data.userRatingCount || 0)} reseñas en Google</span>`;
+      }
+      const reviews = (data.reviews || []).slice(0, 3);
+      if (!reviews.length) {
+        reviewList.innerHTML = '<p class="google-reviews-status">Todavía no hay reseñas disponibles para mostrar.</p>';
+        return;
+      }
+      reviewList.innerHTML = reviews.map(review => `<article class="google-review-card"><div class="google-review-meta"><span class="google-review-stars">★ ${Number(review.rating).toFixed(1)}</span><span class="google-review-date">${escapeHtml(review.published || 'Google')}</span></div>${review.text ? `<blockquote>${escapeHtml(review.text)}</blockquote>` : '<p class="google-review-no-text">Calificación sin comentario escrito.</p>'}<div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">${escapeHtml(String(review.author || 'G').trim().charAt(0).toUpperCase())}</span><strong>${escapeHtml(review.author || 'Usuario de Google')}</strong></div></article>`).join('');
+    } catch {
+      showReviewSamples();
+    }
+  }
+  loadGoogleReviews();
+
+  const contactSection = $('#contacto');
+  if (contactSection && 'IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    contactSection.classList.add('contact-motion-ready');
+    const contactObserver = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        contactSection.classList.add('contact-motion-visible');
+        contactObserver.disconnect();
+      }
+    }, { threshold: 0.12 });
+    contactObserver.observe(contactSection);
+  }
 })();

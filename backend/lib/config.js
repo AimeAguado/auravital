@@ -35,5 +35,8 @@ module.exports = {
   mongoDbName: process.env.MONGODB_DB || 'auravital',
   mongoDnsServers: (process.env.MONGODB_DNS_SERVERS || '').split(',').map(value => value.trim()).filter(Boolean),
   dataStore: process.env.DATA_STORE || 'json',
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  resendFromEmail: process.env.RESEND_FROM_EMAIL || '',
+  googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY || '',
   timezone: 'America/Argentina/Buenos_Aires',
 };

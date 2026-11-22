@@ -40,8 +40,9 @@ before(async () => {
     professionalId = 'test-professional';
     db.professionals.push({ id: professionalId, userId: 'test-professional-user', name: 'Dra. Test Profesional', specialty: 'Dermatología', description: 'Perfil de pruebas.', price: 12000, durationMinutes: 30, treatments: [{ id: 'test-treatment-short', name: 'Consulta breve', price: 12000, durationMinutes: 30, active: true }, { id: 'test-treatment-long', name: 'Tratamiento extendido', price: 12000, durationMinutes: 45, active: true }], active: true, turnerMode: 'AURA_VITAL', schedule: [{ weekday, start: '10:00', end: '11:00', enabled: true }], blocks: [] });
     db.settings.minBookingHours = 0;
+    db.settings.cancellationHours = 720;
   });
-  server = spawn(process.execPath, ['backend/main.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PORT: String(port), DATA_STORE: 'json', DATA_FILE: dataFile, SESSION_SECRET: 'integration-tests-only-secret' }, stdio: 'ignore' });
+  server = spawn(process.execPath, ['backend/main.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, PORT: String(port), DATA_STORE: 'json', DATA_FILE: dataFile, SESSION_SECRET: 'integration-tests-only-secret', RESEND_API_KEY: '', RESEND_FROM_EMAIL: '', GOOGLE_PLACES_API_KEY: '' }, stdio: 'ignore' });
   await waitForServer();
 });
 
@@ -57,6 +58,12 @@ test('publica los perfiles y protege las rutas administrativas', async () => {
   assert.equal('email' in publicResult.payload.professionals[0], false);
   assert.equal('blocks' in publicResult.payload.professionals[0], false);
   assert.equal((await request('/api/admin/professionals')).status, 401);
+});
+
+test('no presenta reseñas inventadas si Google Places no está configurado', async () => {
+  const response = await request('/api/reviews');
+  assert.equal(response.status, 503);
+  assert.deepEqual(response.payload, { error: 'La conexión de reseñas de Google todavía no está configurada.' });
 });
 
 test('registra pacientes y valida credenciales', async () => {
@@ -113,6 +120,9 @@ test('serializa reservas concurrentes y aísla los turnos de cada paciente', asy
   assert.ok(winner.payload.appointment.id);
   assert.equal(winner.payload.appointment.treatmentName, 'Tratamiento extendido');
   assert.equal(winner.payload.appointment.durationMinutes, 45);
+  assert.equal(winner.payload.appointment.status, 'confirmed', 'El turno queda confirmado con la acción del paciente.');
+  assert.equal(winner.payload.appointment.confirmationEmailStatus, 'pending');
+  assert.equal(winner.payload.appointment.reminderEmailStatus, 'pending');
   assert.equal(loser.payload.error, 'Ese horario ya no está disponible. Elegí otro.');
   const mine = await request('/api/appointments', { cookie: winner === result[0] ? register1.cookie : register2.cookie });
   const other = await request('/api/appointments', { cookie: winner === result[0] ? register2.cookie : register1.cookie });
@@ -125,6 +135,17 @@ test('serializa reservas concurrentes y aísla los turnos de cada paciente', asy
   assert.equal('dni' in patientData, false);
   assert.equal('birthDate' in patientData, false);
   assert.equal('phone' in patientData, false);
+});
+
+test('el paciente puede cancelar un turno aunque la regla antigua exija 30 días', async () => {
+  const patient = await request('/api/auth/register', { method: 'POST', body: JSON.stringify({ firstName: 'Paciente', lastName: 'Cancelación', email: 'cancel-booking@test.invalid', password }) });
+  const date = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+  const booking = await request('/api/appointments', { method: 'POST', cookie: patient.cookie, body: JSON.stringify({ professionalId, treatmentId: 'test-treatment-short', date, time: '10:00' }) });
+  assert.equal(booking.status, 201);
+  assert.equal(booking.payload.appointment.status, 'confirmed');
+  const cancelled = await request(`/api/appointments/${booking.payload.appointment.id}/status`, { method: 'PATCH', cookie: patient.cookie, body: JSON.stringify({ status: 'cancelled' }) });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.payload.appointment.status, 'cancelled');
 });
 
 test('profesionales ven únicamente sus turnos y pueden gestionar su agenda', async () => {
@@ -143,9 +164,22 @@ test('profesionales ven únicamente sus turnos y pueden gestionar su agenda', as
   assert.equal(dateSchedule.status, 200);
   const pactAvailability = await request(`/api/professionals/${professionalId}/availability?from=${pactDate}&to=${pactDate}&treatmentId=test-treatment`);
   assert.deepEqual(pactAvailability.payload.slots.map(slot => slot.time), ['13:00']);
+  const weeklyUpdate = await request('/api/professional/me/schedule', { method: 'PATCH', cookie: login.cookie, body: JSON.stringify({ schedule: [{ weekday: new Date(`${pactDate}T12:00:00Z`).getUTCDay(), start: '15:00', end: '16:00', enabled: true }] }) });
+  assert.equal(weeklyUpdate.status, 200);
+  const weeklyAvailability = await request(`/api/professionals/${professionalId}/availability?from=${pactDate}&to=${pactDate}&treatmentId=test-treatment`);
+  assert.deepEqual(weeklyAvailability.payload.slots.map(slot => slot.time), ['13:00'], 'La disponibilidad puntual debe prevalecer sobre la semanal.');
+  const followingDate = new Date(`${pactDate}T12:00:00Z`); followingDate.setUTCDate(followingDate.getUTCDate() + 7);
+  const followingWeek = followingDate.toISOString().slice(0, 10);
+  const weeklyAvailabilityOnNextWeek = await request(`/api/professionals/${professionalId}/availability?from=${followingWeek}&to=${followingWeek}&treatmentId=test-treatment`);
+  assert.deepEqual(weeklyAvailabilityOnNextWeek.payload.slots.map(slot => slot.time), ['15:00'], 'El paciente debe ver el horario semanal actualizado en fechas sin excepción puntual.');
+  assert.equal(weeklyUpdate.payload.professional.schedule[0].weekday, new Date(`${pactDate}T12:00:00Z`).getUTCDay());
   const appointments = await request('/api/appointments', { cookie: login.cookie });
   assert.equal(appointments.status, 200);
   assert.ok(appointments.payload.appointments.every(item => item.professionalId === professionalId));
+  const confirmed = await request(`/api/appointments/${appointments.payload.appointments[0].id}/status`, { method: 'PATCH', cookie: login.cookie, body: JSON.stringify({ status: 'confirmed' }) });
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.payload.appointment.confirmationEmailStatus, 'pending');
+  assert.equal(confirmed.payload.appointment.reminderEmailStatus, 'pending');
   const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
   const blocked = await request('/api/professional/me/blocks', { method: 'POST', cookie: login.cookie, body: JSON.stringify({ date, start: '10:00', end: '10:30' }) });
   assert.equal(blocked.status, 409);

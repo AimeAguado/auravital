@@ -1,7 +1,8 @@
 const express = require('express');
 const crypto = require('node:crypto');
-const { timezone } = require('../lib/config');
+const { timezone, googlePlacesApiKey } = require('../lib/config');
 const { store } = require('../lib/store');
+const { createNotificationWorker } = require('../lib/notifications');
 const { hashPassword, verifyPassword, setSession, clearSession, sessionUserId } = require('../lib/auth');
 
 const app = express();
@@ -11,6 +12,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const loginAttempts = new Map();
 const id = () => crypto.randomUUID();
 const cleanText = (value, max = 300) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const notifications = createNotificationWorker(store, { logger: console });
+let googleReviewsCache = { expiresAt: 0, data: null };
+let googleReviewsRequest = null;
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -273,6 +277,44 @@ app.get('/api/professionals/:id/availability', async (req, res) => {
   res.json({ professional: publicProfessional(professional), treatment, slots, timezone });
 });
 
+app.get('/api/reviews', async (_req, res) => {
+  if (!googlePlacesApiKey) return res.status(503).json({ error: 'La conexión de reseñas de Google todavía no está configurada.' });
+  try {
+    if (googleReviewsCache.expiresAt <= Date.now()) {
+      if (!googleReviewsRequest) {
+        googleReviewsRequest = fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': googlePlacesApiKey,
+            'X-Goog-FieldMask': 'places.displayName,places.reviews,places.rating,places.userRatingCount,places.googleMapsUri',
+          },
+          body: JSON.stringify({ textQuery: 'Aura Estética Integral, Libertad 351, Darregueira, Buenos Aires, Argentina', languageCode: 'es', regionCode: 'AR' }),
+        }).then(async response => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error?.message || `Google Places respondió HTTP ${response.status}.`);
+          const place = (payload.places || []).find(item => String(item.displayName?.text || '').toLowerCase().includes('aura')) || payload.places?.[0];
+          if (!place) return { reviews: [], rating: null, userRatingCount: 0, googleMapsUri: 'https://share.google/KkgQVZW4HWienisuA' };
+          const reviews = (place.reviews || []).map(review => ({
+            author: review.authorAttribution?.displayName || 'Usuario de Google',
+            authorUri: review.authorAttribution?.uri || '',
+            rating: Number(review.rating) || 0,
+            text: review.text?.text || review.originalText?.text || '',
+            published: review.relativePublishTimeDescription || '',
+            publishTime: review.publishTime || '',
+          })).filter(review => review.rating > 0 || review.text).sort((a, b) => Date.parse(b.publishTime || 0) - Date.parse(a.publishTime || 0)).slice(0, 3);
+          return { reviews, rating: Number(place.rating) || null, userRatingCount: Number(place.userRatingCount) || 0, googleMapsUri: place.googleMapsUri || 'https://share.google/KkgQVZW4HWienisuA' };
+        }).finally(() => { googleReviewsRequest = null; });
+      }
+      googleReviewsCache = { data: await googleReviewsRequest, expiresAt: Date.now() + 60 * 60 * 1000 };
+    }
+    res.json(googleReviewsCache.data);
+  } catch (error) {
+    console.error(`No se pudieron cargar reseñas de Google: ${error.message}`);
+    res.status(502).json({ error: 'No pudimos cargar las reseñas de Google en este momento.' });
+  }
+});
+
 app.post('/api/appointments', requireRole('PATIENT'), async (req, res, next) => {
   try {
     const { professionalId, date, time, treatmentId } = req.body;
@@ -285,12 +327,13 @@ app.post('/api/appointments', requireRole('PATIENT'), async (req, res, next) => 
       if (!treatment) { const error = new Error('El tratamiento elegido ya no está disponible. Elegí otro.'); error.status = 409; throw error; }
       const slot = listSlots(db, professional, date, treatment.durationMinutes).find(item => item.time === time);
       if (!slot) { const error = new Error('Ese horario ya no está disponible. Elegí otro.'); error.status = 409; throw error; }
-      const created = { id: id(), professionalId, patientId: req.user.id, date, time, startAt: slot.startAt, endAt: slot.endAt, price: Number(treatment.price), treatmentId: treatment.id, treatmentName: treatment.name, durationMinutes: Number(treatment.durationMinutes), status: 'pending', source: 'AURA_VITAL', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      const created = { id: id(), professionalId, patientId: req.user.id, date, time, startAt: slot.startAt, endAt: slot.endAt, price: Number(treatment.price), treatmentId: treatment.id, treatmentName: treatment.name, durationMinutes: Number(treatment.durationMinutes), status: 'confirmed', source: 'AURA_VITAL', confirmationEmailStatus: 'pending', reminderEmailStatus: 'pending', confirmationEmailEvent: id(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       db.appointments.push(created);
       audit(db, req.user, 'appointment.created', { appointmentId: created.id, professionalId, date, time });
       return created;
     });
     res.status(201).json({ appointment });
+    setImmediate(() => notifications.process().catch(error => console.error(`Error en notificaciones de turno: ${error.message}`)));
   } catch (error) { next(error); }
 });
 
@@ -340,10 +383,11 @@ app.post('/api/admin/appointments', requireRole('ADMIN'), async (req, res, next)
       const startAt = slot?.startAt || toArgentinaInstant(date, time).toISOString();
       const duration = professional.durationMinutes || 30;
       const endAt = slot?.endAt || new Date(new Date(startAt).getTime() + duration * 60000).toISOString();
-      const created = { id: id(), professionalId, patientId: patient.id, date, time, startAt, endAt, price, status: 'confirmed', source, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: req.user.id };
+      const created = { id: id(), professionalId, patientId: patient.id, date, time, startAt, endAt, price, status: 'confirmed', source, ...(source === 'AURA_VITAL' ? { confirmationEmailStatus: 'pending', reminderEmailStatus: 'pending', confirmationEmailEvent: id() } : {}), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: req.user.id };
       db.appointments.push(created); audit(db, req.user, 'admin.appointment.created', { appointmentId: created.id, professionalId, patientId: patient.id, source }); return created;
     });
     res.status(201).json({ appointment });
+    setImmediate(() => notifications.process().catch(error => console.error(`Error en notificaciones de turno: ${error.message}`)));
   } catch (error) { next(error); }
 });
 app.patch('/api/admin/appointments/:id', requireRole('ADMIN'), async (req, res, next) => {
@@ -375,10 +419,17 @@ app.patch('/api/admin/appointments/:id', requireRole('ADMIN'), async (req, res, 
         item.patientId = req.body.patientId;
       }
       if (req.body.price !== undefined && Number.isFinite(Number(req.body.price)) && Number(req.body.price) >= 0) item.price = Number(req.body.price);
-      if (req.body.status && APPOINTMENT_STATES.has(req.body.status)) item.status = req.body.status;
+      if (req.body.status && APPOINTMENT_STATES.has(req.body.status)) {
+        const wasConfirmed = item.status === 'confirmed';
+        item.status = req.body.status;
+        if (!wasConfirmed && item.status === 'confirmed' && item.source === 'AURA_VITAL') {
+          item.confirmationEmailStatus = 'pending'; item.reminderEmailStatus = 'pending'; item.confirmationEmailEvent = id();
+        }
+      }
       item.updatedAt = new Date().toISOString(); audit(db, req.user, 'admin.appointment.updated', { appointmentId: item.id, from: old, to: { professionalId: item.professionalId, patientId: item.patientId, date: item.date, time: item.time } }); return item;
     });
     res.json({ appointment });
+    if (req.body.status === 'confirmed') setImmediate(() => notifications.process().catch(error => console.error(`Error en notificaciones de turno: ${error.message}`)));
   } catch (error) { next(error); }
 });
 app.patch('/api/appointments/:id/status', requireAuth, async (req, res, next) => {
@@ -390,8 +441,6 @@ app.patch('/api/appointments/:id/status', requireAuth, async (req, res, next) =>
       if (!item || !canViewAppointment(req.user, item, db)) { const error = new Error('Turno no encontrado.'); error.status = 404; throw error; }
       if (req.user.role === 'PATIENT') {
         if (status !== 'cancelled' || !ACTIVE_APPOINTMENT_STATES.has(item.status)) { const error = new Error('No podés realizar ese cambio en el turno.'); error.status = 403; throw error; }
-        const cancelHours = Number(db.settings.cancellationHours || 0);
-        if (new Date(item.startAt).getTime() - Date.now() < cancelHours * 3600000) { const error = new Error(`Los turnos deben cancelarse con al menos ${cancelHours} horas de anticipación.`); error.status = 409; throw error; }
       } else if (req.user.role === 'PROFESSIONAL' && !['confirmed', 'cancelled', 'completed', 'no_show'].includes(status)) {
         const error = new Error('Estado no permitido para el profesional.'); error.status = 403; throw error;
       }
@@ -401,10 +450,14 @@ app.patch('/api/appointments/:id/status', requireAuth, async (req, res, next) =>
         if (professional?.turnerMode === 'AURA_VITAL' && !listSlots(db, professional, item.date).some(slot => slot.time === item.time)) { const error = new Error('No se puede reactivar el turno: el horario ya no está disponible.'); error.status = 409; throw error; }
       }
       item.status = status; item.updatedAt = new Date().toISOString();
+      if (status === 'confirmed' && oldStatus !== 'confirmed' && item.source === 'AURA_VITAL') {
+        item.confirmationEmailStatus = 'pending'; item.reminderEmailStatus = 'pending'; item.confirmationEmailEvent = id();
+      }
       audit(db, req.user, 'appointment.status.changed', { appointmentId: item.id, from: oldStatus, to: status });
       return item;
     });
     res.json({ appointment });
+    if (status === 'confirmed') setImmediate(() => notifications.process().catch(error => console.error(`Error en notificaciones de turno: ${error.message}`)));
   } catch (error) { next(error); }
 });
 
@@ -631,4 +684,5 @@ app.use((error, _req, res, _next) => {
   res.status(status).json({ error: status >= 500 ? 'Ocurrió un error interno. Intentá nuevamente.' : error.message });
 });
 
+notifications.start();
 module.exports = app;

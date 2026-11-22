@@ -41,6 +41,16 @@ Esto compila `frontend/` y NestJS sirve la aplicación en `http://127.0.0.1:4173
 
 La configuración privada permanece en `.env` (excluido de Git). Las variables principales son `DATA_STORE`, `MONGODB_URI`, `MONGODB_DB`, `MONGODB_DNS_SERVERS` y `PORT`. MongoDB debe permitir transacciones. El servidor escucha en `127.0.0.1` y conserva el secreto de sesión en `.data/session-secret`.
 
+### Correos de turnos (Resend)
+
+Configurá `RESEND_API_KEY` y `RESEND_FROM_EMAIL` en `.env` o en el entorno del servidor. El remitente debe pertenecer a un dominio verificado en Resend, por ejemplo `Aura Vital <turnos@tu-dominio-verificado.com>`. Sin estas variables, las notificaciones quedan pendientes y se reintentan cuando el servicio vuelva a estar configurado.
+
+Cuando el paciente confirma su reserva, el turno queda confirmado inmediatamente, Aura Vital envía el correo de confirmación y programa un recordatorio 24 horas antes. El paciente puede cancelar sus turnos activos en cualquier momento. El recordatorio solo se envía mientras el turno siga confirmado. Un proceso del backend revisa las notificaciones cada minuto; el proveedor recibe una clave idempotente por turno y evento para evitar reenvíos duplicados.
+
+### Reseñas de Google Places
+
+Para mostrar las tres reseñas más recientes de Aura Estética Integral, configurá `GOOGLE_PLACES_API_KEY` en `.env`. La clave debe tener habilitada Places API (New) en Google Cloud, con facturación activa; mantenela solo en el backend y restringila a Places API. El backend resuelve la ficha por nombre y dirección y guarda la respuesta en memoria durante una hora. Sin esta variable, la Comunidad muestra tarjetas de muestra con la etiqueta visible “Ejemplo ficticio · No publicado en Google”.
+
 ```bash
 npm test
 ```

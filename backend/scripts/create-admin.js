@@ -8,8 +8,8 @@ async function main() {
   try {
     const email = (await rl.question('Email del administrador: ')).trim().toLowerCase();
     const name = (await rl.question('Nombre y apellido: ')).trim();
-    const password = await rl.question('Contraseña (mínimo 12 caracteres): ');
-    if (!/^\S+@\S+\.\S+$/.test(email) || !name || password.length < 12) throw new Error('Email, nombre o contraseña no válidos.');
+    const password = await rl.question('Contraseña (mínimo 10 caracteres): ');
+    if (!/^\S+@\S+\.\S+$/.test(email) || !name || password.length < 10) throw new Error('Email, nombre o contraseña no válidos.');
     await store.update(async db => {
       if (db.users.some(user => user.email === email)) throw new Error('Ese email ya está registrado.');
       const [firstName, ...last] = name.split(/\s+/);

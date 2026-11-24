@@ -1,8 +1,10 @@
 const express = require('express');
 const crypto = require('node:crypto');
-const { timezone, googlePlacesApiKey } = require('../lib/config');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { timezone, googlePlacesApiKey, root } = require('../lib/config');
 const { store } = require('../lib/store');
-const { createNotificationWorker } = require('../lib/notifications');
+const { createNotificationWorker, sendResendEmail } = require('../lib/notifications');
 const { hashPassword, verifyPassword, setSession, clearSession, sessionUserId } = require('../lib/auth');
 
 const app = express();
@@ -21,6 +23,7 @@ app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.set('X-Frame-Options', 'SAMEORIGIN');
+  if (req.path.startsWith('/api')) res.set('Cache-Control', 'no-store');
   next();
 });
 app.use(express.json({ limit: '256kb' }));
@@ -39,6 +42,21 @@ app.use('/api', (req, res, next) => {
   }
   next();
 });
+
+const uploadsRoot = path.join(root, '.data', 'uploads');
+const uploadsDirectory = path.join(uploadsRoot, 'profesionales');
+app.use('/uploads', express.static(uploadsRoot, { maxAge: '7d' }));
+
+const IMAGE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+function imageExtension(buffer, contentType) {
+  const type = String(contentType || '').split(';')[0].trim();
+  if (!buffer.length || !IMAGE_TYPES[type]) return null;
+  if (type === 'image/jpeg' && buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
+  if (type === 'image/png' && buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (type === 'image/webp' && buffer.length > 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  if (type === 'image/gif' && buffer.length > 6 && /^GIF8[79]a/.test(buffer.toString('ascii', 0, 6))) return 'gif';
+  return null;
+}
 
 function publicUser(user) {
   if (!user) return null;
@@ -223,6 +241,45 @@ app.post('/api/auth/login', async (req, res, next) => {
     res.json({ user: privateUser(user) });
   } catch (error) { next(error); }
 });
+app.post('/api/auth/forgot-password', async (req, res, next) => {
+  try {
+    const email = cleanText(req.body.email, 254).toLowerCase();
+    const user = (await store.read()).users.find(item => item.email === email && item.active !== false);
+    if (user) {
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      await store.update(db => {
+        const current = db.users.find(item => item.id === user.id && item.active !== false);
+        if (current) { current.passwordResetTokenHash = tokenHash; current.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); }
+      });
+      const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+      const link = `${origin}/?reset=${encodeURIComponent(token)}`;
+      const text = `Recibimos una solicitud para cambiar la contraseña de tu cuenta Aura Vital. Abrí este enlace dentro de los próximos 30 minutos: ${link}\n\nSi no solicitaste el cambio, ignorá este correo.`;
+      const html = `<div style="font-family:Arial,sans-serif;color:#2f3e34;line-height:1.6"><h2>Restablecé tu contraseña</h2><p>El enlace es válido durante 30 minutos y se puede usar una sola vez.</p><p><a href="${link}" style="display:inline-block;padding:12px 20px;background:#526c59;color:white;text-decoration:none;border-radius:8px">Crear nueva contraseña</a></p><p>Si no solicitaste el cambio, ignorá este correo.</p></div>`;
+      try { await sendResendEmail({ to: user.email, subject: 'Restablecé tu contraseña · Aura Vital', html, text }); }
+      catch (error) { console.error(`No se pudo enviar el correo de recuperación: ${String(error.message).slice(0, 200)}`); }
+    }
+    res.json({ message: 'Si existe una cuenta con ese email, enviaremos un enlace para recuperar la contraseña.' });
+  } catch (error) { next(error); }
+});
+app.post('/api/auth/reset-password', async (req, res, next) => {
+  try {
+    const token = typeof req.body.token === 'string' ? req.body.token : '';
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    if (password.length < 10 || password.length > 200) return res.status(400).json({ error: 'La nueva contraseña debe tener entre 10 y 200 caracteres.' });
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const changed = await store.update(async db => {
+      const user = db.users.find(item => item.passwordResetTokenHash === tokenHash && Date.parse(item.passwordResetExpiresAt) > Date.now() && item.active !== false);
+      if (!user) return false;
+      user.passwordHash = await hashPassword(password);
+      delete user.passwordResetTokenHash; delete user.passwordResetExpiresAt;
+      audit(db, user, 'account.password.reset');
+      return true;
+    });
+    if (!changed) return res.status(400).json({ error: 'El enlace venció o ya fue utilizado. Solicitá uno nuevo.' });
+    res.json({ changed: true });
+  } catch (error) { next(error); }
+});
 app.post('/api/auth/logout', (_req, res) => { clearSession(res); res.status(204).end(); });
 app.get('/api/auth/me', (req, res) => res.json({ user: privateUser(req.user) }));
 app.patch('/api/profile', requireRole('PATIENT'), async (req, res, next) => {
@@ -253,6 +310,25 @@ app.post('/api/account/password', requireAuth, async (req, res, next) => {
       return true;
     });
     res.json({ changed });
+  } catch (error) { next(error); }
+});
+app.patch('/api/account/credentials', requireRole('ADMIN', 'PROFESSIONAL'), async (req, res, next) => {
+  try {
+    const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
+    const email = cleanText(req.body.email, 254).toLowerCase();
+    const newPassword = typeof req.body.newPassword === 'string' ? req.body.newPassword : '';
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Ingresá un email válido.' });
+    if (newPassword && (newPassword.length < 10 || newPassword.length > 200)) return res.status(400).json({ error: 'La nueva contraseña debe tener entre 10 y 200 caracteres.' });
+    const updated = await store.update(async db => {
+      const user = db.users.find(item => item.id === req.user.id && item.active !== false);
+      if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) { const error = new Error('La contraseña actual no es correcta.'); error.status = 401; throw error; }
+      if (db.users.some(item => item.id !== user.id && item.email === email)) { const error = new Error('Ese email ya está registrado.'); error.status = 409; throw error; }
+      user.email = email;
+      if (newPassword) user.passwordHash = await hashPassword(newPassword);
+      audit(db, user, 'account.credentials.updated', { emailChanged: email !== req.user.email, passwordChanged: Boolean(newPassword) });
+      return user;
+    });
+    res.json({ user: privateUser(updated) });
   } catch (error) { next(error); }
 });
 
@@ -601,6 +677,29 @@ app.patch('/api/admin/professionals/:id', requireRole('ADMIN'), async (req, res,
       return publicProfessional(professional, user, true);
     });
     res.json({ professional: result });
+  } catch (error) { next(error); }
+});
+app.post('/api/admin/professionals/:id/photo', requireRole('ADMIN'), express.raw({ type: Object.keys(IMAGE_TYPES), limit: '6mb' }), async (req, res, next) => {
+  try {
+    const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const extension = imageExtension(buffer, req.get('content-type'));
+    if (!extension) return res.status(400).json({ error: 'Enviá una imagen JPG, PNG, WebP o GIF válida de hasta 6 MB.' });
+    const existing = (await store.read()).professionals.find(item => item.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Profesional no encontrado.' });
+    const filename = `${id()}.${extension}`;
+    await fs.mkdir(uploadsDirectory, { recursive: true });
+    await fs.writeFile(path.join(uploadsDirectory, filename), buffer, { mode: 0o644 });
+    const photoUrl = `/uploads/profesionales/${filename}`;
+    const updated = await store.update(db => {
+      const professional = db.professionals.find(item => item.id === req.params.id);
+      if (!professional) { const error = new Error('Profesional no encontrado.'); error.status = 404; throw error; }
+      const previous = professional.photo;
+      professional.photo = photoUrl;
+      audit(db, req.user, 'admin.professional.photo.updated', { professionalId: professional.id });
+      if (previous && previous.startsWith('/uploads/')) fs.unlink(path.join(uploadsRoot, previous.slice('/uploads/'.length))).catch(() => {});
+      return publicProfessional(professional, db.users.find(user => user.id === professional.userId), true);
+    });
+    res.json({ professional: updated });
   } catch (error) { next(error); }
 });
 app.patch('/api/admin/professionals/:id/schedule', requireRole('ADMIN'), async (req, res, next) => {

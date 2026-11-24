@@ -262,7 +262,7 @@ function BookingWizard({ initialDetail = {} }) {
           const hasLiveSchedule = Boolean(person.live?.id) && person.live?.turnerMode !== 'BLIPDOC';
           const selected = selectedProfessional?.key === person.key;
           return <button type="button" key={person.key} className={`booking-professional-card${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => setSelectedProfessional(person)}>
-            <img src={person.photo} alt="" />
+            <img src={person.live?.photo || person.photo} alt="" />
             <span className="booking-professional-info"><strong>{person.name}</strong><small>{person.specialty}</small><small>{isExternal ? 'Reserva externa por BlipDoc' : hasLiveSchedule ? 'Agenda Aura Vital disponible' : 'Agenda en preparación'}</small>{nextAvailable[person.key] && <small>Próximo turno: {dateLabel(nextAvailable[person.key].date)} · {nextAvailable[person.key].time}</small>}{selected && <span className="booking-selected-label">✓ Seleccionado</span>}</span>
             <span className="booking-selection" aria-hidden="true">{selected ? '✓' : '›'}</span>
           </button>;

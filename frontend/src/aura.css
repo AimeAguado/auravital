@@ -95,7 +95,7 @@ body.professional-user .hero-reservation { display: none !important; }
 .professionals-section { margin-top: 0; padding-top: 34px; background: #fff4ee; }
 .professional-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .professional-card { overflow: hidden; border-radius: 13px; padding: 0; }
-.professional-presentation { display: block; width: 100%; aspect-ratio: .92; object-fit: contain; background: #f7f2ed; }
+.professional-presentation { display: block; width: 100%; aspect-ratio: .84; object-fit: cover; object-position: center; background: #f7f2ed; }
 .professional-card-content { display: flex; flex: 1; width: 100%; flex-direction: column; align-items: center; padding: 19px 20px 20px; }
 .professional-card h3 { font-size: 21px; }
 .professional-specialty { max-width: 360px; }
@@ -930,7 +930,7 @@ h1, h2, h3, .brand strong, .image-note strong, .map-caption strong { font-family
   .specialty-catalog, .professional-list, .testimonial-grid, .space-gallery { grid-template-columns: 1fr; }
   .specialty-card { min-height: 0; padding: 20px; }
   .professional-card-content { padding: 20px; }
-  .professional-presentation { aspect-ratio: 1.15; }
+  .professional-presentation { aspect-ratio: 1; }
   .testimonial-card { min-height: 160px; padding: 22px; }
   .booking { margin: 0 18px 22px; padding: 28px 0; }
   .booking .wrap { width: calc(100% - 36px); }
@@ -1192,6 +1192,11 @@ main > #contacto.contact-section { padding-block: clamp(40px,4vw,60px); }
 #auth-modal .portal-form input:focus { border-color: #bd9152; background: #fffefa; box-shadow: 0 0 0 3px rgba(189,145,82,.13); }
 #auth-modal .portal-form .button { min-height: 48px; margin-top: 3px; border: 1px solid #7d5a22; border-radius: 11px; background: linear-gradient(135deg,#987036,#7d5a22); box-shadow: 0 6px 16px rgba(98,68,29,.14); color: white; font-size: 12px; font-weight: 700; }
 #auth-modal .portal-form .button:hover { background: #694818; }
+#auth-modal .auth-recovery { margin: -4px 0 2px; text-align: center; }
+#auth-modal .auth-recovery-text { margin: 0; color: #6b5d52; font-size: 13px; line-height: 1.5; }
+#auth-modal .text-link { padding: 0; border: 0; background: none; color: #7d5a22; font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+#auth-modal .text-link:hover { color: #5c4836; }
+.admin-photo-preview { display: block; width: 84px; height: 84px; object-fit: cover; border-radius: 50%; border: 1px solid #e0d6c8; background: #f7f4ef; }
 @media (max-width: 580px) {
   #auth-modal .modal-panel { padding: 31px 22px 25px; border-radius: 18px; }
   #auth-modal .modal-close { top: 12px; right: 12px; width: 34px; height: 34px; }

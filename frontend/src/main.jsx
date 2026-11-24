@@ -94,7 +94,7 @@ function ProfessionalList() {
       const isBlipdoc = person.mode === 'BLIPDOC';
       return (
         <article className="professional-card" id={`profesional-${person.key}`} key={person.key}>
-          <img className="professional-presentation" src={person.image} alt={`Presentación profesional de ${person.name}`} loading="lazy" />
+          <img className="professional-presentation" src={professional?.photo || person.image} alt={`Presentación profesional de ${person.name}`} loading="lazy" />
           <div className="professional-card-content">
             <span className={`professional-badge${isBlipdoc ? ' external' : ''}`}>{isBlipdoc ? 'Turnos online · BlipDoc' : 'Reserva en Aura Vital'}</span>
             <h3>{person.name}</h3>

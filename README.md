@@ -51,9 +51,9 @@ Configurá `RESEND_API_KEY` y `RESEND_FROM_EMAIL` en `.env` o en el entorno del 
 
 Cuando el paciente confirma su reserva, el turno queda confirmado inmediatamente, Aura Vital envía el correo de confirmación y programa un recordatorio 24 horas antes. El paciente puede cancelar sus turnos activos en cualquier momento. El recordatorio solo se envía mientras el turno siga confirmado. Un proceso del backend revisa las notificaciones cada minuto; el proveedor recibe una clave idempotente por turno y evento para evitar reenvíos duplicados.
 
-### Reseñas de Google Places
+### Reseñas de Google
 
-Para mostrar hasta tres reseñas de 5 estrellas de Aura Estética Integral, configurá `GOOGLE_PLACES_API_KEY` en `.env`. La clave debe tener habilitada Places API (New) en Google Cloud, con facturación activa; mantenela solo en el backend y restringila a Places API. Recomendamos fijar `GOOGLE_PLACE_ID` con el ID de la ficha oficial para evitar búsquedas por texto; si no se indica, el backend resuelve la ficha con `GOOGLE_PLACES_QUERY`. La respuesta se guarda en memoria durante una hora. Opcionalmente, `GOOGLE_REVIEW_URL` define el enlace del botón «Dejar una reseña» y `GOOGLE_MAPS_URL` el de «Ver todas las reseñas en Google». Sin `GOOGLE_PLACES_API_KEY`, la sección muestra un mensaje para leer las opiniones directamente en Google, sin reseñas ficticias.
+La sección «Reseñas de Google» muestra las opiniones reales mediante el mapa embebido de Google, sin necesidad de `GOOGLE_PLACES_API_KEY`. Los botones «Ver todas las reseñas en Google» y «Dejá una reseña en Google» abren las URL públicas de la ficha. No se muestran reseñas inventadas cuando no hay una clave de Places API.
 
 ```bash
 npm test

@@ -435,6 +435,7 @@
 
   const GOOGLE_REVIEWS_URL = 'https://maps.app.goo.gl/6MYYkXz3YeLJorZH7';
   const GOOGLE_REVIEW_FORM_URL = 'https://share.google/KkgQVZW4HWienisuA';
+  const GOOGLE_MAPS_EMBED_URL = 'https://www.google.com/maps?q=Aura%20Est%C3%A9tica%20Integral%2C%20Libertad%20351%2C%20Darregueira%2C%20Buenos%20Aires%2C%20Argentina&output=embed';
   const GOOGLE_STAR_PATH = 'M12 2.8l2.85 5.78 6.38.93-4.62 4.5 1.09 6.35L12 17.36l-5.7 3-1.09-6.35-4.62-4.5 6.38-.93z';
   const safeUrl = (value, fallback) => {
     if (!value) return fallback;
@@ -524,46 +525,18 @@
     return `<article class="google-review-card"><div class="google-review-top">${googleStars(review.rating)}${dateMarkup}</div>${body}<footer class="google-review-footer"><div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">${initial}</span>${authorName}</div><span class="google-review-source">${googleLogo(14)}<span>Google</span></span></footer>${permalink ? `<a class="google-review-permalink" href="${escapeHtml(permalink)}" target="_blank" rel="noopener noreferrer nofollow">Ver esta reseña en Google <span aria-hidden="true">↗</span></a>` : ''}</article>`;
   }
 
-  async function loadGoogleReviews() {
+  function loadGoogleReviews() {
     const track = $('#google-reviews');
     const ratingSummary = $('#google-rating-summary');
     const controls = $('#google-review-controls');
     if (!track) return;
-    const showStatus = message => {
-      track.setAttribute('aria-busy', 'false');
-      track.dataset.count = '0';
-      if (controls) controls.hidden = true;
-      track.innerHTML = `<div class="google-reviews-status google-reviews-error" role="status"><p>${escapeHtml(message)}</p><a class="google-reviews-error-link" href="${escapeHtml(GOOGLE_REVIEWS_URL)}" target="_blank" rel="noopener noreferrer">Ver las reseñas en Google <span aria-hidden="true">↗</span></a></div>`;
-    };
-    try {
-      const response = await fetch('/api/reviews');
-      if (!response.ok) {
-        if (ratingSummary) ratingSummary.hidden = true;
-        showStatus('No pudimos cargar las reseñas en este momento. Podés leerlas directamente en Google.');
-        return;
-      }
-      const data = await response.json();
-      const reviews = (data.reviews || []).filter(review => Number(review.rating) === 5).slice(0, 3);
-      track.setAttribute('aria-busy', 'false');
-      track.dataset.count = String(reviews.length);
-      track.style.setProperty('--review-count', String(Math.max(1, reviews.length)));
-      $('[data-google-reviews-link]')?.setAttribute('href', safeUrl(data.googleMapsUri, GOOGLE_REVIEWS_URL));
-      $('[data-google-review-link]')?.setAttribute('href', safeUrl(data.reviewUrl, GOOGLE_REVIEW_FORM_URL));
-      if (ratingSummary && data.rating) {
-        const count = Number(data.userRatingCount || 0);
-        ratingSummary.hidden = false;
-        ratingSummary.innerHTML = `<span class="google-rating-score"><span class="google-rating-star" aria-hidden="true">★</span><strong>${Number(data.rating).toFixed(1)}</strong></span><span class="google-rating-sep" aria-hidden="true">·</span><span class="google-rating-count">${count} ${count === 1 ? 'reseña' : 'reseñas'} en Google</span>`;
-      }
-      if (!reviews.length) {
-        showStatus('Todavía no hay reseñas de 5 estrellas para mostrar. Podés leer todas las opiniones en Google.');
-        return;
-      }
-      track.innerHTML = reviews.map(reviewCardMarkup).join('');
-      setupReviewsCarousel(track, reviews);
-    } catch {
-      if (ratingSummary) ratingSummary.hidden = true;
-      showStatus('No pudimos cargar las reseñas en este momento. Podés leerlas directamente en Google.');
-    }
+    if (ratingSummary) ratingSummary.hidden = true;
+    if (controls) controls.hidden = true;
+    track.setAttribute('aria-busy', 'false');
+    track.dataset.count = '0';
+    $('[data-google-reviews-link]')?.setAttribute('href', GOOGLE_REVIEWS_URL);
+    $('[data-google-review-link]')?.setAttribute('href', GOOGLE_REVIEW_FORM_URL);
+    track.innerHTML = `<div class="google-reviews-embed"><iframe title="Reseñas de Aura Vital en Google Maps" src="${GOOGLE_MAPS_EMBED_URL}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe><p class="google-reviews-embed-note">Las opiniones se cargan desde Google. Si no se muestran, abrí «Ver todas las reseñas en Google».</p></div>`;
   }
   loadGoogleReviews();
 

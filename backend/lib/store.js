@@ -60,7 +60,7 @@ class MongoStore {
     if (mongoDnsServers.length) require('node:dns').setServers(mongoDnsServers);
     const { MongoClient } = require('mongodb');
     if (!this.uri) throw new Error('MONGODB_URI no está configurada en .env.');
-    this.client = new MongoClient(this.uri, { serverSelectionTimeoutMS: 10000, appName: 'AuraVitalLocal' });
+    this.client = new MongoClient(this.uri, { serverSelectionTimeoutMS: 10000, appName: 'AuraVitalLocal', autoSelectFamily: false, family: 4 });
     await this.client.connect();
     this.db = this.client.db(this.databaseName);
     await Promise.all([

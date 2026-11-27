@@ -24,12 +24,15 @@ const matchesName = (a, b) => {
   const left = cleanName(a).split(' '); const right = cleanName(b).split(' ');
   return left[0] === right[0] && left.at(-1)?.slice(0, 5) === right.at(-1)?.slice(0, 5);
 };
+const initials = name => cleanName(name).split(' ').filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('');
+const liveAsPerson = live => ({ key: live.id, name: live.name, specialty: live.specialty, description: live.description, photo: live.photo, mode: live.turnerMode, url: live.blipdocUrl, live });
 const todayArgentina = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const dateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const dateLabel = date => new Intl.DateTimeFormat('es-AR', { dateStyle: 'full', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
 const monthLabel = date => new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' }).format(date);
 const shiftMonth = (date, amount) => new Date(date.getFullYear(), date.getMonth() + amount, 1);
 const matchesCategory = (person, category) => {
+  if (typeof category === 'string' && category.startsWith('live-')) return cleanName(person.specialty) === category.slice(5);
   const text = cleanName(person.specialty);
   if (category === 'dermatologia') return text.includes('dermatolog') || text.includes('clinica medica');
   if (category === 'dermoestetica') return text.includes('dermoest') || text.includes('micropigment') || text.includes('medicina estetica');
@@ -68,6 +71,20 @@ function BookingWizard({ initialDetail = {} }) {
   const [externalOpened, setExternalOpened] = useState(false);
   const [externalConfirmed, setExternalConfirmed] = useState(false);
 
+  const liveOnly = useMemo(() => professionals.filter(professional => !catalog.some(person => matchesName(person.name, professional.name))), [professionals]);
+  const liveSpecialtyOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+    liveOnly.forEach(professional => {
+      const title = String(professional.specialty || '').trim();
+      const slug = cleanName(title);
+      if (!slug || seen.has(slug) || specialtyOptions.some(option => matchesCategory(professional, option.id))) return;
+      seen.add(slug);
+      options.push({ id: `live-${slug}`, title, description: professional.description || title, icon: '✧' });
+    });
+    return options;
+  }, [liveOnly]);
+
   useEffect(() => {
     fetch('/api/professionals').then(response => response.json()).then(data => setProfessionals(data.professionals || [])).catch(() => setProfessionalsError('No pudimos conectar con las agendas. Los turnos BlipDoc siguen disponibles; para las agendas Aura Vital, escribinos por WhatsApp.'));
     fetch('/api/auth/me', { credentials: 'same-origin' }).then(response => response.json()).then(data => { if (data.user) setPatient(data.user); }).catch(() => {});
@@ -85,6 +102,10 @@ function BookingWizard({ initialDetail = {} }) {
           setSelectedSpecialty(specialtyOptions.find(item => matchesCategory(base, item.id)) || null);
           setSelectedProfessional({ ...base, live });
           setStep(3);
+        } else if (live) {
+          setSelectedSpecialty(specialtyOptions.find(item => matchesCategory(live, item.id)) || liveSpecialtyOptions.find(item => cleanName(item.title) === cleanName(live.specialty)) || null);
+          setSelectedProfessional(liveAsPerson(live));
+          setStep(2);
         }
       } else if (detail.service) {
         const category = specialtyOptions.find(item => cleanName(item.title).includes(cleanName(detail.service)) || cleanName(detail.service).includes(cleanName(item.title)));
@@ -115,7 +136,21 @@ function BookingWizard({ initialDetail = {} }) {
     };
   }, [professionals, initialDetail]);
 
-  const matchingPeople = useMemo(() => selectedSpecialty ? catalog.filter(person => matchesCategory(person, selectedSpecialty.id)).map(person => ({ ...person, live: professionals.find(item => matchesName(person.name, item.name)) || null })) : [], [selectedSpecialty, professionals]);
+  const matchingPeople = useMemo(() => {
+    const list = selectedSpecialty
+      ? catalog.filter(person => matchesCategory(person, selectedSpecialty.id)).map(person => ({ ...person, live: professionals.find(item => matchesName(person.name, item.name)) || null }))
+      : [];
+    if (selectedSpecialty) {
+      const listed = new Set(list.map(person => person.live?.id).filter(Boolean));
+      liveOnly.forEach(professional => {
+        if (listed.has(professional.id)) return;
+        if (!matchesCategory({ id: professional.id, specialty: professional.specialty }, selectedSpecialty.id)) return;
+        list.push(liveAsPerson(professional));
+      });
+    }
+    if (selectedProfessional?.live && !list.some(person => person.live?.id === selectedProfessional.live.id)) list.push(selectedProfessional);
+    return list;
+  }, [selectedSpecialty, professionals, liveOnly, selectedProfessional]);
   const monthDays = useMemo(() => {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
     const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
@@ -249,7 +284,7 @@ function BookingWizard({ initialDetail = {} }) {
       {step === 1 && <div className="booking-step">
         <h3>Elegí la especialidad que necesitás</h3>
         <p className="booking-step-hint">Elegí una opción para continuar.</p>
-        <div className="booking-specialties">{specialtyOptions.map(specialty => { const selected = selectedSpecialty?.id === specialty.id; return <button type="button" key={specialty.id} className={`booking-specialty-card${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => chooseSpecialty(specialty)}><span className="booking-specialty-icon" aria-hidden="true">{specialty.icon}</span><span className="booking-specialty-copy"><strong>{specialty.title}</strong><small>{specialty.description}</small>{selected && <span className="booking-selected-label">✓ Seleccionada</span>}</span><span className="booking-selection" aria-hidden="true">{selected ? '✓' : '›'}</span></button>; })}</div>
+        <div className="booking-specialties">{[...specialtyOptions, ...liveSpecialtyOptions].map(specialty => { const selected = selectedSpecialty?.id === specialty.id; return <button type="button" key={specialty.id} className={`booking-specialty-card${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => chooseSpecialty(specialty)}><span className="booking-specialty-icon" aria-hidden="true">{specialty.icon}</span><span className="booking-specialty-copy"><strong>{specialty.title}</strong><small>{specialty.description}</small>{selected && <span className="booking-selected-label">✓ Seleccionada</span>}</span><span className="booking-selection" aria-hidden="true">{selected ? '✓' : '›'}</span></button>; })}</div>
         <div className="booking-actions booking-specialty-footer"><span className="booking-current-selection">{selectedSpecialty ? <>Seleccionaste: <strong>{selectedSpecialty.title}</strong></> : 'Elegí una especialidad para continuar'}</span><button className="button booking-next" type="button" disabled={!selectedSpecialty} onClick={() => changeStep(2)}>Continuar</button></div>
       </div>}
 
@@ -262,7 +297,9 @@ function BookingWizard({ initialDetail = {} }) {
           const hasLiveSchedule = Boolean(person.live?.id) && person.live?.turnerMode !== 'BLIPDOC';
           const selected = selectedProfessional?.key === person.key;
           return <button type="button" key={person.key} className={`booking-professional-card${selected ? ' selected' : ''}`} aria-pressed={selected} onClick={() => setSelectedProfessional(person)}>
-            <img src={person.live?.photo || person.photo} alt="" />
+            {person.live?.photo || person.photo
+              ? <img src={person.live?.photo || person.photo} alt="" />
+              : <span className="booking-professional-avatar" aria-hidden="true">{initials(person.name)}</span>}
             <span className="booking-professional-info"><strong>{person.name}</strong><small>{person.specialty}</small><small>{isExternal ? 'Reserva externa por BlipDoc' : hasLiveSchedule ? 'Agenda Aura Vital disponible' : 'Agenda en preparación'}</small>{nextAvailable[person.key] && <small>Próximo turno: {dateLabel(nextAvailable[person.key].date)} · {nextAvailable[person.key].time}</small>}{selected && <span className="booking-selected-label">✓ Seleccionado</span>}</span>
             <span className="booking-selection" aria-hidden="true">{selected ? '✓' : '›'}</span>
           </button>;

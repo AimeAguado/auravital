@@ -57,25 +57,15 @@ function matchProfessional(person, professionals) {
   });
 }
 
-function SpecialtyList() {
-  return specialtyCards.map(specialty => (
-    <article className="specialty-card" key={specialty.professional}>
-      <span className="specialty-icon" aria-hidden="true">{specialty.icon}</span>
-      <div className="specialty-card-copy">
-        <h3>{specialty.title}</h3>
-        <p>{specialty.description}</p>
-        <a href={`#profesional-${specialty.professional}`}>Conocer al profesional <span aria-hidden="true">↗</span></a>
-      </div>
-    </article>
-  ));
+function initials(name) {
+  return normalizedName(name).split(' ').filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('');
 }
 
-function ProfessionalList() {
+function useLiveProfessionals() {
   const [professionals, setProfessionals] = useState(null);
   const [error, setError] = useState('');
-
   useEffect(() => {
-    const receiveProfessionals = event => setProfessionals(event.detail);
+    const receiveProfessionals = event => { setProfessionals(event.detail); setError(''); };
     const receiveError = event => { setError(event.detail); setProfessionals([]); };
     document.addEventListener('auravital:professionals', receiveProfessionals);
     document.addEventListener('auravital:professionals-error', receiveError);
@@ -84,8 +74,49 @@ function ProfessionalList() {
       document.removeEventListener('auravital:professionals-error', receiveError);
     };
   }, []);
+  return { professionals, error };
+}
+
+function extraProfessionals(professionals) {
+  if (!professionals) return [];
+  const matched = new Set(team.map(person => matchProfessional(person, professionals)).filter(Boolean).map(professional => professional.id));
+  return professionals.filter(professional => !matched.has(professional.id));
+}
+
+const specialtyIcons = ['✧', '✦', '♡', '☯', '◌', '◉'];
+
+function SpecialtyList() {
+  const { professionals } = useLiveProfessionals();
+  const extras = extraProfessionals(professionals).filter(professional => !specialtyCards.some(card => normalizedName(card.title) === normalizedName(professional.specialty)));
+  return <>
+    {specialtyCards.map(specialty => (
+      <article className="specialty-card" key={specialty.professional}>
+        <span className="specialty-icon" aria-hidden="true">{specialty.icon}</span>
+        <div className="specialty-card-copy">
+          <h3>{specialty.title}</h3>
+          <p>{specialty.description}</p>
+          <a href={`#profesional-${specialty.professional}`}>Conocer al profesional <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+    ))}
+    {extras.map((professional, index) => (
+      <article className="specialty-card" key={`specialty-${professional.id}`}>
+        <span className="specialty-icon" aria-hidden="true">{specialtyIcons[index % specialtyIcons.length]}</span>
+        <div className="specialty-card-copy">
+          <h3>{professional.specialty}</h3>
+          <p>{professional.description || professional.specialty}</p>
+          <a href={`#profesional-${professional.id}`}>Conocer al profesional <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+    ))}
+  </>;
+}
+
+function ProfessionalList() {
+  const { professionals, error } = useLiveProfessionals();
 
   if (professionals === null) return <p className="notice">Cargando profesionales...</p>;
+  const extras = extraProfessionals(professionals);
 
   return <>
     {error && <p className="notice professional-load-error">No pudimos cargar las agendas. El equipo está disponible para que consultes por contacto.</p>}
@@ -111,6 +142,31 @@ function ProfessionalList() {
               : professional
                 ? <button className="button professional-booking" type="button" data-book-professional={professional.id}>Sacar turno</button>
                 : <button className="button professional-booking" type="button" data-professional-contact={person.name}>Sacar turno</button>}
+          </div>
+        </article>
+      );
+    })}
+    {extras.map(professional => {
+      const isBlipdoc = professional.turnerMode === 'BLIPDOC';
+      return (
+        <article className="professional-card" id={`profesional-${professional.id}`} key={professional.id}>
+          {professional.photo
+            ? <img className="professional-presentation" src={professional.photo} alt={`Presentación profesional de ${professional.name}`} loading="lazy" />
+            : <div className="professional-presentation professional-avatar-fallback" aria-hidden="true">{initials(professional.name)}</div>}
+          <div className="professional-card-content">
+            <span className={`professional-badge${isBlipdoc ? ' external' : ''}`}>{isBlipdoc ? 'Turnos online · BlipDoc' : 'Reserva en Aura Vital'}</span>
+            <h3>{professional.name}</h3>
+            <div className="professional-specialty">{professional.specialty}</div>
+            <p className="professional-description">{professional.description || professional.specialty}</p>
+            <div className="professional-booking-note">
+              <strong>{isBlipdoc ? 'Modalidad de reserva' : 'Atención personalizada'}</strong><br />
+              {isBlipdoc ? 'Reservá tu consulta directamente desde BlipDoc.' : 'Consultá disponibilidad con el equipo de Aura Vital.'}
+            </div>
+            {isBlipdoc
+              ? professional.blipdocUrl
+                ? <a className="button professional-booking secondary" href={professional.blipdocUrl} target="_blank" rel="noopener noreferrer">Sacar turno por BlipDoc ↗</a>
+                : <button className="button professional-booking secondary" type="button" data-professional-contact={professional.name}>Sacar turno por BlipDoc ↗</button>
+              : <button className="button professional-booking" type="button" data-book-professional={professional.id}>Sacar turno</button>}
           </div>
         </article>
       );

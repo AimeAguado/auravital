@@ -7,16 +7,20 @@ Aplicación separada en un frontend React/Vite y un backend NestJS. La persisten
 ```text
 frontend/                 React, Vite, estilos y recursos públicos
 backend/
-  main.js                 Bootstrap de NestJS y servidor estático de producción
+  main.js                 Bootstrap de NestJS, middleware HTTP y servidor estático de producción
   src/app.module.js       Módulo principal de NestJS
   src/health.controller.js Endpoint de salud de NestJS
-  src/legacy-api.js       Adaptador temporal de las rutas existentes
+  src/controllers/        Controladores NestJS por área (auth, turnos, profesionales, admin)
+  src/middleware/         Seguridad, sesión y manejo de errores HTTP
+  src/guards/             Guards de autenticación y roles
+  src/filters/            Filtro global de errores de API
+  src/common/             Constantes, fechas, serialización y utilidades compartidas
   lib/                    Configuración, autenticación y almacenamiento
   scripts/                Herramientas administrativas
 tests/                    Pruebas de integración
 ```
 
-NestJS inicia el servidor y publica el endpoint de salud. Las rutas existentes se mantienen detrás de un adaptador Express de compatibilidad para que la migración no rompa autenticación, turnos ni la conexión de datos; ese adaptador queda aislado en `backend/src/legacy-api.js`.
+NestJS inicia el servidor, publica el endpoint de salud y atiende todas las rutas de la API mediante controladores por área. El middleware previo aplica cabeceras de seguridad, parseo de cuerpos, validación de origen y carga de la sesión antes de cada controlador.
 
 ## Desarrollo
 
@@ -49,7 +53,7 @@ Cuando el paciente confirma su reserva, el turno queda confirmado inmediatamente
 
 ### Reseñas de Google Places
 
-Para mostrar las tres reseñas más recientes de Aura Estética Integral, configurá `GOOGLE_PLACES_API_KEY` en `.env`. La clave debe tener habilitada Places API (New) en Google Cloud, con facturación activa; mantenela solo en el backend y restringila a Places API. El backend resuelve la ficha por nombre y dirección y guarda la respuesta en memoria durante una hora. Sin esta variable, la Comunidad muestra tarjetas de muestra con la etiqueta visible “Ejemplo ficticio · No publicado en Google”.
+Para mostrar hasta tres reseñas de 5 estrellas de Aura Estética Integral, configurá `GOOGLE_PLACES_API_KEY` en `.env`. La clave debe tener habilitada Places API (New) en Google Cloud, con facturación activa; mantenela solo en el backend y restringila a Places API. Recomendamos fijar `GOOGLE_PLACE_ID` con el ID de la ficha oficial para evitar búsquedas por texto; si no se indica, el backend resuelve la ficha con `GOOGLE_PLACES_QUERY`. La respuesta se guarda en memoria durante una hora. Opcionalmente, `GOOGLE_REVIEW_URL` define el enlace del botón «Dejar una reseña» y `GOOGLE_MAPS_URL` el de «Ver todas las reseñas en Google». Sin `GOOGLE_PLACES_API_KEY`, la sección muestra un mensaje para leer las opiniones directamente en Google, sin reseñas ficticias.
 
 ```bash
 npm test

@@ -433,34 +433,136 @@
     if (state.user) updateAccountButton();
   })();
 
+  const GOOGLE_REVIEWS_URL = 'https://maps.app.goo.gl/6MYYkXz3YeLJorZH7';
+  const GOOGLE_REVIEW_FORM_URL = 'https://share.google/KkgQVZW4HWienisuA';
+  const GOOGLE_STAR_PATH = 'M12 2.8l2.85 5.78 6.38.93-4.62 4.5 1.09 6.35L12 17.36l-5.7 3-1.09-6.35-4.62-4.5 6.38-.93z';
+  const safeUrl = (value, fallback) => {
+    if (!value) return fallback;
+    try {
+      const url = new URL(value, window.location.origin);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const googleLogo = (size = 14) => `<svg class="google-review-logo" viewBox="0 0 48 48" width="${size}" height="${size}" aria-hidden="true" focusable="false"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 18.9 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 35.1 26.7 36 24 36c-5.3 0-9.8-3.3-11.4-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4 5.5l6.3 5.3C37.2 39.1 44 34 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>`;
+  const googleStars = (rating = 5) => {
+    const filled = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+    return `<span class="google-review-stars" role="img" aria-label="${filled} de 5 estrellas">${Array.from({ length: 5 }, (_, index) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="${index < filled ? 'is-filled' : ''}"><path d="${GOOGLE_STAR_PATH}"/></svg>`).join('')}</span>`;
+  };
+
+  function setupReviewsCarousel(track, reviews) {
+    const controls = $('#google-review-controls');
+    const dots = $('#google-review-dots');
+    const shell = $('#google-reviews-shell');
+    const mobile = () => window.matchMedia('(max-width: 580px)').matches;
+    const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const indexFor = () => {
+      const trackLeft = track.getBoundingClientRect().left;
+      let closest = 0;
+      let min = Infinity;
+      [...track.children].forEach((card, index) => {
+        const distance = Math.abs(card.getBoundingClientRect().left - trackLeft);
+        if (distance < min) { min = distance; closest = index; }
+      });
+      return closest;
+    };
+    const setActiveDot = index => {
+      if (!dots) return;
+      [...dots.children].forEach((dot, dotIndex) => {
+        if (dotIndex === index) dot.setAttribute('aria-current', 'true');
+        else dot.removeAttribute('aria-current');
+      });
+    };
+    const scrollToIndex = index => {
+      const card = track.children[index];
+      if (!card) return;
+      const left = card.getBoundingClientRect().left - track.getBoundingClientRect().left + track.scrollLeft;
+      track.scrollTo({ left, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    };
+    if (dots) {
+      dots.innerHTML = reviews.map((_, index) => `<button class="google-review-dot" type="button" aria-controls="google-reviews" aria-label="Ir a la reseña ${index + 1} de ${reviews.length}"${index === 0 ? ' aria-current="true"' : ''}></button>`).join('');
+      [...dots.children].forEach((dot, index) => dot.addEventListener('click', () => scrollToIndex(index)));
+    }
+    if (controls) controls.hidden = reviews.length < 2;
+    const prev = $('[data-review-prev]');
+    const next = $('[data-review-next]');
+    prev?.addEventListener('click', () => scrollToIndex(Math.max(0, indexFor() - 1)));
+    next?.addEventListener('click', () => scrollToIndex(Math.min(reviews.length - 1, indexFor() + 1)));
+    let frame = 0;
+    track.addEventListener('scroll', () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; if (mobile()) setActiveDot(indexFor()); });
+    }, { passive: true });
+    track.addEventListener('keydown', event => {
+      if (!mobile()) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); prev?.click(); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); next?.click(); }
+    });
+    if (shell) {
+      if (reduceMotion() || !('IntersectionObserver' in window)) shell.classList.add('is-visible');
+      else {
+        const observer = new IntersectionObserver(entries => {
+          if (entries.some(entry => entry.isIntersecting)) { shell.classList.add('is-visible'); observer.disconnect(); }
+        }, { threshold: 0.15 });
+        observer.observe(shell);
+      }
+    }
+  }
+
+  function reviewCardMarkup(review) {
+    const author = escapeHtml(review.author || 'Usuario de Google');
+    const initial = escapeHtml(String(review.author || 'G').trim().charAt(0).toUpperCase() || 'G');
+    const hasText = Boolean(String(review.text || '').trim());
+    const published = escapeHtml(review.published || '');
+    const publishTime = escapeHtml(review.publishTime || '');
+    const authorUri = safeUrl(review.authorUri, '');
+    const permalink = safeUrl(review.permalink, '');
+    const dateMarkup = published ? (publishTime ? `<time class="google-review-date" datetime="${publishTime}">${published}</time>` : `<span class="google-review-date">${published}</span>`) : '';
+    const authorName = authorUri ? `<a class="google-review-author-name" href="${escapeHtml(authorUri)}" target="_blank" rel="noopener noreferrer nofollow">${author}</a>` : `<strong class="google-review-author-name">${author}</strong>`;
+    const body = hasText ? `<blockquote class="google-review-quote">${escapeHtml(review.text)}</blockquote>` : '<p class="google-review-no-text">Calificación de 5 estrellas sin comentario escrito.</p>';
+    return `<article class="google-review-card"><div class="google-review-top">${googleStars(review.rating)}${dateMarkup}</div>${body}<footer class="google-review-footer"><div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">${initial}</span>${authorName}</div><span class="google-review-source">${googleLogo(14)}<span>Google</span></span></footer>${permalink ? `<a class="google-review-permalink" href="${escapeHtml(permalink)}" target="_blank" rel="noopener noreferrer nofollow">Ver esta reseña en Google <span aria-hidden="true">↗</span></a>` : ''}</article>`;
+  }
+
   async function loadGoogleReviews() {
-    const reviewList = $('#google-reviews');
+    const track = $('#google-reviews');
     const ratingSummary = $('#google-rating-summary');
-    if (!reviewList) return;
-    const showReviewSamples = () => {
-      const samples = [
-        { author: 'Perfil de ejemplo', text: 'Un espacio cálido y cuidado, donde cada detalle invita a sentirse cómoda.' },
-        { author: 'Perfil de ejemplo', text: 'La atención cercana y el ambiente tranquilo hacen que la visita se sienta especial.' },
-        { author: 'Perfil de ejemplo', text: 'Un consultorio hermoso y acogedor, pensado para que te sientas bien acompañada.' },
-      ];
-      reviewList.innerHTML = samples.map(review => `<article class="google-review-card google-review-sample"><span class="google-review-demo-label">Ejemplo ficticio · No publicado en Google</span><div class="google-review-meta"><span class="google-review-stars" aria-label="5 de 5 estrellas">★★★★★</span><span class="google-review-date">5.0</span></div><blockquote>${escapeHtml(review.text)}</blockquote><div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">E</span><strong>${escapeHtml(review.author)}</strong></div></article>`).join('');
+    const controls = $('#google-review-controls');
+    if (!track) return;
+    const showStatus = message => {
+      track.setAttribute('aria-busy', 'false');
+      track.dataset.count = '0';
+      if (controls) controls.hidden = true;
+      track.innerHTML = `<div class="google-reviews-status google-reviews-error" role="status"><p>${escapeHtml(message)}</p><a class="google-reviews-error-link" href="${escapeHtml(GOOGLE_REVIEWS_URL)}" target="_blank" rel="noopener noreferrer">Ver las reseñas en Google <span aria-hidden="true">↗</span></a></div>`;
     };
     try {
       const response = await fetch('/api/reviews');
-      if (!response.ok) throw new Error('No pudimos consultar las reseñas.');
-      const data = await response.json();
-      if (data.rating) {
-        ratingSummary.hidden = false;
-        ratingSummary.innerHTML = `<strong>★ ${Number(data.rating).toFixed(1)}</strong><span>·</span><span>${Number(data.userRatingCount || 0)} reseñas en Google</span>`;
-      }
-      const reviews = (data.reviews || []).slice(0, 3);
-      if (!reviews.length) {
-        reviewList.innerHTML = '<p class="google-reviews-status">Todavía no hay reseñas disponibles para mostrar.</p>';
+      if (!response.ok) {
+        if (ratingSummary) ratingSummary.hidden = true;
+        showStatus('No pudimos cargar las reseñas en este momento. Podés leerlas directamente en Google.');
         return;
       }
-      reviewList.innerHTML = reviews.map(review => `<article class="google-review-card"><div class="google-review-meta"><span class="google-review-stars">★ ${Number(review.rating).toFixed(1)}</span><span class="google-review-date">${escapeHtml(review.published || 'Google')}</span></div>${review.text ? `<blockquote>${escapeHtml(review.text)}</blockquote>` : '<p class="google-review-no-text">Calificación sin comentario escrito.</p>'}<div class="google-review-author"><span class="google-review-avatar" aria-hidden="true">${escapeHtml(String(review.author || 'G').trim().charAt(0).toUpperCase())}</span><strong>${escapeHtml(review.author || 'Usuario de Google')}</strong></div></article>`).join('');
+      const data = await response.json();
+      const reviews = (data.reviews || []).filter(review => Number(review.rating) === 5).slice(0, 3);
+      track.setAttribute('aria-busy', 'false');
+      track.dataset.count = String(reviews.length);
+      track.style.setProperty('--review-count', String(Math.max(1, reviews.length)));
+      $('[data-google-reviews-link]')?.setAttribute('href', safeUrl(data.googleMapsUri, GOOGLE_REVIEWS_URL));
+      $('[data-google-review-link]')?.setAttribute('href', safeUrl(data.reviewUrl, GOOGLE_REVIEW_FORM_URL));
+      if (ratingSummary && data.rating) {
+        const count = Number(data.userRatingCount || 0);
+        ratingSummary.hidden = false;
+        ratingSummary.innerHTML = `<span class="google-rating-score"><span class="google-rating-star" aria-hidden="true">★</span><strong>${Number(data.rating).toFixed(1)}</strong></span><span class="google-rating-sep" aria-hidden="true">·</span><span class="google-rating-count">${count} ${count === 1 ? 'reseña' : 'reseñas'} en Google</span>`;
+      }
+      if (!reviews.length) {
+        showStatus('Todavía no hay reseñas de 5 estrellas para mostrar. Podés leer todas las opiniones en Google.');
+        return;
+      }
+      track.innerHTML = reviews.map(reviewCardMarkup).join('');
+      setupReviewsCarousel(track, reviews);
     } catch {
-      showReviewSamples();
+      if (ratingSummary) ratingSummary.hidden = true;
+      showStatus('No pudimos cargar las reseñas en este momento. Podés leerlas directamente en Google.');
     }
   }
   loadGoogleReviews();

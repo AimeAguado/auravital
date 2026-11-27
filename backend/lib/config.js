@@ -38,5 +38,9 @@ module.exports = {
   resendApiKey: process.env.RESEND_API_KEY || '',
   resendFromEmail: process.env.RESEND_FROM_EMAIL || '',
   googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY || '',
+  googlePlaceId: process.env.GOOGLE_PLACE_ID || '',
+  googlePlacesQuery: process.env.GOOGLE_PLACES_QUERY || 'Aura Estética Integral, Libertad 351, Darregueira, Buenos Aires, Argentina',
+  googleReviewUrl: process.env.GOOGLE_REVIEW_URL || 'https://share.google/KkgQVZW4HWienisuA',
+  googleMapsUrl: process.env.GOOGLE_MAPS_URL || 'https://maps.app.goo.gl/6MYYkXz3YeLJorZH7',
   timezone: 'America/Argentina/Buenos_Aires',
 };

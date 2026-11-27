@@ -96,6 +96,7 @@ body.professional-user .hero-reservation { display: none !important; }
 .professional-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .professional-card { overflow: hidden; border-radius: 13px; padding: 0; }
 .professional-presentation { display: block; width: 100%; aspect-ratio: .84; object-fit: cover; object-position: center; background: #f7f2ed; }
+.professional-card .professional-avatar-fallback { font-size: 64px; }
 .professional-card-content { display: flex; flex: 1; width: 100%; flex-direction: column; align-items: center; padding: 19px 20px 20px; }
 .professional-card h3 { font-size: 21px; }
 .professional-specialty { max-width: 360px; }
@@ -193,6 +194,7 @@ body.professional-user .hero-reservation { display: none !important; }
 .booking-professional-card:hover, .booking-professional-card.selected { border-color: var(--gold-dark); background: #fff9f2; }
 .booking-professional-card.selected { border-width: 2px; box-shadow: 0 0 0 3px #89602220; }
 .booking-professional-card > img { width: 54px; height: 54px; flex: 0 0 54px; border-radius: 50%; object-fit: cover; }
+.booking-professional-avatar { display: grid; width: 54px; height: 54px; flex: 0 0 54px; place-items: center; border-radius: 50%; background: linear-gradient(145deg, #efe1ce, #c8a265); color: #fff; font: 18px var(--serif); }
 .booking-professional-info { display: grid; gap: 3px; }
 .booking-professional-info strong { font-size: 16px; }
 .booking-professional-info small { color: var(--muted); font-size: 14px; line-height: 1.4; }
@@ -396,6 +398,7 @@ body.professional-user .hero-reservation { display: none !important; }
 .booking-professional-card { min-height: 84px; gap: 14px; padding: 12px 14px; border-color: #eee3db; transition: border-color .18s, background .18s, box-shadow .18s, transform .18s; }
 .booking-professional-card:hover { transform: translateY(-1px); box-shadow: 0 7px 20px rgba(61,47,40,.07); }
 .booking-professional-card > img { width: 58px; height: 58px; flex-basis: 58px; border: 2px solid #f2e7dd; }
+.booking-professional-card > .booking-professional-avatar { width: 58px; height: 58px; flex-basis: 58px; border: 2px solid #f2e7dd; }
 .booking-professional-info { gap: 4px; }
 .booking-professional-info strong { font-size: 14px; }
 .booking-professional-info small { font-size: 11px; }
@@ -1396,49 +1399,86 @@ body { background: var(--linen); color: var(--ink); }
   #contacto .contact-photo img { transition: none; }
 }
 
-/* Google reviews: display the real Google response, never editorial stand-ins. */
+/* Google reviews: real reviews from the official Google profile, never editorial stand-ins. */
 #comunidad.google-reviews-section { padding: clamp(68px,8vw,104px) 0; background: #fafaf6; }
 #comunidad .section-head { margin-bottom: 34px; }
 #comunidad .section-head .eyebrow { color: #68775f; }
 #comunidad .section-head h2 { color: #303e34; }
-#comunidad .google-rating-summary { display: flex; justify-content: center; gap: 10px; align-items: center; margin-top: 16px; color: #68756c; font-size: 12px; }
+#comunidad .google-rating-summary { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; align-items: center; margin-top: 16px; color: #68756c; font-size: 12px; }
 #comunidad .google-rating-summary[hidden] { display: none; }
-#comunidad .google-rating-summary strong { color: #627550; font-size: 15px; }
-#comunidad .google-review-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; align-items: stretch; }
-#comunidad .google-review-card { display: flex; min-width: 0; min-height: 230px; flex-direction: column; padding: 23px; border: 1px solid #e2e3da; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(39,51,45,.045); transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
-#comunidad .google-review-demo-label { display: block; margin: -2px 0 14px; color: #8b6133; font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-#comunidad .google-review-sample { justify-content: flex-start; }
-#comunidad .google-review-sample { border-style: dashed; background: #fcfbf7; }
-#comunidad .google-review-sample .google-review-demo-label { width: fit-content; padding: 6px 8px; border-radius: 4px; background: #f4eee3; color: #805d3b; letter-spacing: .08em; }
-#comunidad .google-review-sample .google-review-stars { color: #a47b3e; letter-spacing: .08em; }
+#comunidad .google-rating-score { display: inline-flex; align-items: center; gap: 5px; color: #627550; font-weight: 700; }
+#comunidad .google-rating-score strong { font-size: 15px; }
+#comunidad .google-rating-star { color: #a47b3e; font-size: 14px; line-height: 1; }
+#comunidad .google-rating-sep { color: #b3b8ac; }
+#comunidad .google-reviews-shell { position: relative; }
+#comunidad .google-review-track { --review-count: 3; display: grid; grid-template-columns: repeat(var(--review-count),minmax(0,1fr)); gap: 16px; align-items: stretch; outline: none; }
+#comunidad .google-review-track[data-count="1"] { grid-template-columns: minmax(0,420px); justify-content: center; }
+#comunidad .google-review-track[data-count="2"] { max-width: 780px; margin-inline: auto; }
+#comunidad .google-review-track:focus-visible { outline: 2px solid #aebba7; outline-offset: 6px; border-radius: 16px; }
+#comunidad .google-review-card { display: flex; min-width: 0; min-height: 248px; flex-direction: column; padding: 24px; border: 1px solid #e2e3da; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(39,51,45,.045); opacity: 0; transform: translateY(12px); transition: opacity .45s ease, transform .45s ease, box-shadow .2s ease, border-color .2s ease; }
+#comunidad .google-reviews-shell.is-visible .google-review-card { opacity: 1; transform: translateY(0); }
+#comunidad .google-reviews-shell.is-visible .google-review-card:nth-child(2) { transition-delay: .07s, 0s, 0s, 0s; }
+#comunidad .google-reviews-shell.is-visible .google-review-card:nth-child(3) { transition-delay: .14s, 0s, 0s, 0s; }
 #comunidad .google-review-card:hover { transform: translateY(-2px); border-color: #cbd2c4; box-shadow: 0 14px 32px rgba(39,51,45,.08); }
-#comunidad .google-review-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 17px; }
-#comunidad .google-review-stars { color: #8b7548; font-size: 12px; font-weight: 700; white-space: nowrap; }
-#comunidad .google-review-date { color: #858a7e; font-size: 10px; text-align: right; }
-#comunidad .google-review-card blockquote { flex: 1; margin: 0 0 22px; color: #4e5c52; font: 400 18px/1.5 'Newsreader', Georgia, serif; overflow-wrap: anywhere; }
+#comunidad .google-review-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 18px; }
+#comunidad .google-review-stars { display: inline-flex; gap: 2px; align-items: center; }
+#comunidad .google-review-stars svg { width: 15px; height: 15px; fill: #ded9ce; }
+#comunidad .google-review-stars svg.is-filled { fill: #a47b3e; }
+#comunidad .google-review-date { color: #858a7e; font-size: 10px; text-align: right; white-space: nowrap; }
+#comunidad .google-review-quote { flex: 1; margin: 0 0 22px; color: #4e5c52; font: 400 18px/1.55 'Newsreader', Georgia, serif; overflow-wrap: anywhere; white-space: pre-line; }
 #comunidad .google-review-no-text { flex: 1; margin: 0 0 22px; color: #778177; font-size: 13px; font-style: italic; }
-#comunidad .google-review-author { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid #eef0e9; color: #39493d; font-size: 12px; }
+#comunidad .google-review-footer { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding-top: 14px; border-top: 1px solid #eef0e9; }
+#comunidad .google-review-author { display: flex; min-width: 0; align-items: center; gap: 10px; color: #39493d; font-size: 12px; }
 #comunidad .google-review-avatar { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 50%; background: #e8ece3; color: #536b56; font: 500 15px 'Newsreader', Georgia, serif; }
-#comunidad .google-reviews-status { grid-column: 1 / -1; margin: 0; padding: 26px; border: 1px solid #e2e3da; border-radius: 14px; background: #fff; color: #68756c; text-align: center; }
-#comunidad .google-review-cta { display: flex; width: fit-content; min-height: 44px; justify-content: center; align-items: center; gap: 8px; margin: 26px auto 0; padding: 0 18px; border: 1px solid #d8ddd2; border-radius: 999px; color: #526751; font-size: 12px; font-weight: 700; transition: background .18s ease, border-color .18s ease; }
+#comunidad .google-review-author-name { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+a.google-review-author-name { color: #39493d; text-decoration: none; }
+a.google-review-author-name:hover { color: #526751; text-decoration: underline; text-underline-offset: 3px; }
+#comunidad .google-review-source { display: inline-flex; flex: 0 0 auto; gap: 5px; align-items: center; color: #8a8f85; font-size: 10px; letter-spacing: .04em; }
+#comunidad .google-review-logo { display: block; }
+#comunidad .google-review-permalink { margin-top: 12px; color: #68756c; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-decoration: none; }
+#comunidad .google-review-permalink:hover { color: #526751; text-decoration: underline; text-underline-offset: 3px; }
+#comunidad .google-reviews-status { grid-column: 1 / -1; display: flex; width: 100%; flex-direction: column; gap: 14px; align-items: center; margin: 0; padding: 30px 26px; border: 1px solid #e2e3da; border-radius: 14px; background: #fff; color: #68756c; text-align: center; }
+#comunidad .google-reviews-status p { max-width: 46ch; margin: 0; font-size: 13px; line-height: 1.6; }
+#comunidad .google-reviews-error-link { display: inline-flex; min-height: 40px; align-items: center; gap: 6px; padding: 0 15px; border: 1px solid #d8ddd2; border-radius: 999px; color: #526751; font-size: 11px; font-weight: 700; text-decoration: none; transition: background .18s ease, border-color .18s ease; }
+#comunidad .google-reviews-error-link:hover { border-color: #aebba7; background: #f1f3ec; }
+#comunidad .google-review-controls { display: none; }
+#comunidad .google-review-control { display: grid; width: 40px; height: 40px; flex: 0 0 40px; place-items: center; border: 1px solid #d8ddd2; border-radius: 50%; background: #fff; color: #526751; cursor: pointer; transition: background .18s ease, border-color .18s ease; }
+#comunidad .google-review-control:hover { border-color: #aebba7; background: #f1f3ec; }
+#comunidad .google-review-dots { display: flex; gap: 6px; align-items: center; }
+#comunidad .google-review-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 50%; background: #d4d8cd; cursor: pointer; transition: width .2s ease, background .2s ease; }
+#comunidad .google-review-dot[aria-current="true"] { width: 18px; border-radius: 999px; background: #68775f; }
+#comunidad .google-review-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 26px; }
+#comunidad .google-review-cta { display: inline-flex; min-height: 44px; justify-content: center; align-items: center; gap: 8px; padding: 0 18px; border: 1px solid #d8ddd2; border-radius: 999px; color: #526751; font-size: 12px; font-weight: 700; text-decoration: none; transition: background .18s ease, border-color .18s ease, color .18s ease; }
 #comunidad .google-review-cta:hover { border-color: #aebba7; background: #f1f3ec; }
+#comunidad .google-review-cta-secondary { border-color: #303e34; background: #303e34; color: #fafaf6; }
+#comunidad .google-review-cta-secondary:hover { border-color: #405447; background: #405447; color: #fafaf6; }
 #contacto .contact-location { justify-content: flex-start; }
 #contacto .contact-location .map-card { min-height: 300px; flex: 1 1 auto; margin-top: 16px; }
 #contacto .contact-location .map-card iframe { height: auto; min-height: 300px; flex: 1 1 300px; }
 #contacto .contact-photo { height: 100%; min-height: 0; aspect-ratio: auto; }
 @media (max-width: 850px) {
-  #comunidad .google-review-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #comunidad .google-review-track { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #comunidad .google-review-track[data-count="1"] { grid-template-columns: minmax(0,420px); }
   #contacto .contact-photo { height: 100%; min-height: 0; aspect-ratio: auto; }
 }
 @media (max-width: 580px) {
   #comunidad.google-reviews-section { padding: 58px 0; }
   #comunidad .section-head { margin-bottom: 24px; }
-  #comunidad .google-review-grid { grid-template-columns: 1fr; gap: 12px; }
-  #comunidad .google-review-card { min-height: 190px; padding: 20px; }
-  #comunidad .google-review-card blockquote { font-size: 17px; }
+  #comunidad .google-review-track, #comunidad .google-review-track[data-count="1"], #comunidad .google-review-track[data-count="2"] { display: flex; max-width: none; gap: 12px; margin: 0; padding-bottom: 4px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #comunidad .google-review-track::-webkit-scrollbar { display: none; }
+  #comunidad .google-review-card { flex: 0 0 100%; min-height: 210px; padding: 22px; scroll-snap-align: start; }
+  #comunidad .google-review-quote { font-size: 17px; }
+  #comunidad .google-review-controls:not([hidden]) { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 18px; }
+  #comunidad .google-review-actions { margin-top: 20px; }
+  #comunidad .google-review-cta { width: 100%; }
   #contacto .contact-location .map-card { min-height: 240px; }
   #contacto .contact-location .map-card iframe { min-height: 240px; flex-basis: 240px; }
   #contacto .contact-photo { height: auto; min-height: 0; aspect-ratio: 1.1 / 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #comunidad .google-review-card { opacity: 1; transform: none; transition: none; }
+  #comunidad .google-review-card:hover { transform: none; }
+  #comunidad .google-review-control, #comunidad .google-review-dot, #comunidad .google-review-cta, #comunidad .google-reviews-error-link { transition: none; }
 }
 .professional-side-foot, .professional-workspace-heading { border-color: #e2e0d6; color: #6d6d63; }
 .professional-content-grid .portal-panel, .professional-workspace > .portal-panel, .portal-panel { border-color: #e5e3d9; border-radius: 4px; background: #fbfaf6; box-shadow: 0 5px 18px rgba(49,48,39,.035); }

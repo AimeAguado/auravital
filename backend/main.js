@@ -13,7 +13,7 @@ const { notifications } = require('./src/common/notifications');
 const { root, port } = require('./lib/config');
 const { store } = require('./lib/store');
 
-async function bootstrap() {
+async function createApp({ serveFrontend = true } = {}) {
   if (typeof store.ready === 'function') await store.ready();
 
   const app = await NestFactory.create(AppModule, { bodyParser: false });
@@ -30,23 +30,34 @@ async function bootstrap() {
   instance.use('/api', loadUser);
   instance.use(apiErrorHandler);
 
-  const frontendDist = path.join(root, 'frontend', 'dist');
-  if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
-    instance.use(express.static(frontendDist, { extensions: ['html'] }));
-    instance.use((req, res, next) => {
-      if (req.method === 'GET' && !req.path.startsWith('/api') && req.accepts('html')) {
-        return res.sendFile(path.join(frontendDist, 'index.html'));
-      }
-      next();
-    });
+  if (serveFrontend) {
+    const frontendDist = path.join(root, 'frontend', 'dist');
+    if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
+      instance.use(express.static(frontendDist, { extensions: ['html'] }));
+      instance.use((req, res, next) => {
+        if (req.method === 'GET' && !req.path.startsWith('/api') && req.accepts('html')) {
+          return res.sendFile(path.join(frontendDist, 'index.html'));
+        }
+        next();
+      });
+    }
   }
 
+  return { app, instance };
+}
+
+async function bootstrap() {
+  const { app } = await createApp();
   await app.listen(port, '127.0.0.1');
   notifications.start();
   console.log(`Aura Vital NestJS disponible en http://127.0.0.1:${port}`);
 }
 
-bootstrap().catch(error => {
-  console.error(`No se pudo iniciar Aura Vital: ${error.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  bootstrap().catch(error => {
+    console.error(`No se pudo iniciar Aura Vital: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { createApp };
